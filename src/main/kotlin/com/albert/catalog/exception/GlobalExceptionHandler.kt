@@ -3,6 +3,7 @@ package com.albert.catalog.exception
 import com.albert.catalog.dto.ErrorResponse
 import io.github.oshai.kotlinlogging.KotlinLogging
 import jakarta.validation.ConstraintViolationException
+import org.springframework.dao.DuplicateKeyException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.MethodArgumentNotValidException
@@ -110,6 +111,20 @@ class GlobalExceptionHandler {
         log.warn { "Resource not found: ${ex.message}" }
 
         return ResponseEntity.notFound().build()
+    }
+
+    @ExceptionHandler(DuplicateKeyException::class)
+    fun handleDuplicateKeyException(ex: DuplicateKeyException): ResponseEntity<ErrorResponse> {
+        log.warn { "Duplicate key violation during import: ${ex.message}" }
+
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(
+            ErrorResponse(
+                timestamp = Instant.now(),
+                status = HttpStatus.CONFLICT.value(),
+                error = "Duplicate Key Error",
+                message = "Duplicate entry detected during import operation. Some products may already exist.",
+            ),
+        )
     }
 
     @ExceptionHandler(Exception::class)
