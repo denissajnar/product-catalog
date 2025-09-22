@@ -200,14 +200,12 @@ class ProductServiceImpl(
             // Step 4: Process updates in batch
             if (updates.isNotEmpty()) {
                 val updatedProducts = updates.mapNotNull { newProduct ->
-                    existingProducts[newProduct.goldId]?.let { existing ->
-                        existing.copy(
-                            longName = newProduct.longName,
-                            shortName = newProduct.shortName,
-                            iowUnitType = newProduct.iowUnitType,
-                            healthyCategory = newProduct.healthyCategory,
-                        )
-                    }
+                    existingProducts[newProduct.goldId]?.copy(
+                        longName = newProduct.longName,
+                        shortName = newProduct.shortName,
+                        iowUnitType = newProduct.iowUnitType,
+                        healthyCategory = newProduct.healthyCategory,
+                    )
                 }
 
                 try {
