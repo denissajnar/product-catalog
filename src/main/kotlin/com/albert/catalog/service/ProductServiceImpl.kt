@@ -1,6 +1,6 @@
 package com.albert.catalog.service
 
-import com.albert.catalog.csv.SimpleFlatMapperParser
+import com.albert.catalog.csv.JacksonCsvParser
 import com.albert.catalog.dto.ProductPageResponse
 import com.albert.catalog.dto.ProductRequest
 import com.albert.catalog.dto.ProductResponse
@@ -20,7 +20,7 @@ import org.springframework.transaction.annotation.Transactional
 @Service
 class ProductServiceImpl(
     private val productRepository: ProductRepository,
-    private val simpleFlatMapperParser: SimpleFlatMapperParser,
+    private val csvParser: JacksonCsvParser,
 ) : ProductService {
 
     companion object {
@@ -93,42 +93,148 @@ class ProductServiceImpl(
     }
 
     /**
-     * Imports products from a CSV file and saves them in batches to the database.
-     * The method processes the file contents in streaming mode to handle large files efficiently.
-     * If the file contains more products than the specified batch size, the products are divided into smaller batches
-     * and saved to the database incrementally.
-     *
-     * @param file The file containing product information to be imported. Expected to be in CSV format.
+     * Imports products from CSV with efficient batch processing and duplicate handling
+     * Each batch is processed in a separate transaction for better performance and error recovery
      */
-    @Transactional
     override suspend fun importProducts(file: FilePart) {
-        val products = mutableListOf<Product>()
+        log.info { "Starting efficient product import with batch size: $DEFAULT_BATCH_SIZE" }
+
         var totalProcessed = 0
-        var batchCount = 0
+        var savedCount = 0
+        var updatedCount = 0
+        var errorCount = 0
+        val batch = mutableListOf<Product>()
 
-        log.info { "Starting product import with batch size: $DEFAULT_BATCH_SIZE" }
-
-        simpleFlatMapperParser.parseFileStreaming(file)
+        csvParser.parseFileStreaming(file)
             .collect { product ->
-                products.add(product)
-                totalProcessed++
+                batch.add(product)
 
-                if (products.size >= DEFAULT_BATCH_SIZE) {
-                    batchCount++
-                    log.info { "Processing batch $batchCount with ${products.size} products" }
-                    productRepository.saveAll(products).toList()
-                    products.clear()
-                    log.debug { "Batch $batchCount saved successfully. Total processed so far: $totalProcessed" }
+                if (batch.size >= DEFAULT_BATCH_SIZE) {
+                    val batchNumber = (totalProcessed / DEFAULT_BATCH_SIZE) + 1
+                    log.info { "Processing batch $batchNumber with ${batch.size} products" }
+
+                    val batchResult = processBatch(batch.toList())
+
+                    totalProcessed += batch.size
+                    savedCount += batchResult.saved
+                    updatedCount += batchResult.updated
+                    errorCount += batchResult.errors
+
+                    batch.clear()
+                    log.debug { "Batch $batchNumber complete. Progress: saved=${batchResult.saved}, updated=${batchResult.updated}, errors=${batchResult.errors}" }
                 }
             }
 
-        if (products.isNotEmpty()) {
-            batchCount++
-            log.info { "Processing final batch $batchCount with ${products.size} products" }
-            productRepository.saveAll(products).toList()
-            log.debug { "Final batch $batchCount saved successfully" }
+        // Process remaining products in the batch
+        if (batch.isNotEmpty()) {
+            val batchNumber = (totalProcessed / DEFAULT_BATCH_SIZE) + 1
+            log.info { "Processing final batch $batchNumber with ${batch.size} products" }
+
+            val batchResult = processBatch(batch.toList())
+
+            totalProcessed += batch.size
+            savedCount += batchResult.saved
+            updatedCount += batchResult.updated
+            errorCount += batchResult.errors
+
+            log.debug { "Final batch $batchNumber complete. Progress: saved=${batchResult.saved}, updated=${batchResult.updated}, errors=${batchResult.errors}" }
         }
 
-        log.info { "Product import completed. Total products processed: $totalProcessed in $batchCount batches" }
+        log.info {
+            "Import completed: processed=$totalProcessed, " +
+                    "saved=$savedCount, updated=$updatedCount, errors=$errorCount"
+        }
     }
+
+    /**
+     * Process a batch of products in a single transaction with efficient duplicate handling
+     */
+    @Transactional
+    suspend fun processBatch(products: List<Product>): BatchResult {
+        var saved = 0
+        var updated = 0
+        var errors = 0
+
+        try {
+            // Step 1: Bulk query existing products by goldId
+            val goldIds = products.map { it.goldId }
+            val existingProducts =
+                productRepository.findByGoldIdIn(goldIds)
+                    .toList()
+                    .associateBy { it.goldId }
+
+            // Step 2: Separate new products from updates
+            val (updates, inserts) = products.partition { existingProducts.containsKey(it.goldId) }
+
+            // Step 3: Process inserts in batch
+            if (inserts.isNotEmpty()) {
+                try {
+                    productRepository.saveAll(inserts).toList()
+                    saved += inserts.size
+                    log.debug { "Batch inserted ${inserts.size} new products" }
+                } catch (e: Exception) {
+                    log.error { "Batch insert failed, processing individually: ${e.message}" }
+                    // Fallback: process inserts individually
+                    inserts.forEach { product ->
+                        try {
+                            productRepository.save(product)
+                            saved++
+                        } catch (ex: Exception) {
+                            errors++
+                            log.error { "Failed to save product with goldId ${product.goldId}: ${ex.message}" }
+                        }
+                    }
+                }
+            }
+
+            // Step 4: Process updates in batch
+            if (updates.isNotEmpty()) {
+                val updatedProducts = updates.mapNotNull { newProduct ->
+                    existingProducts[newProduct.goldId]?.let { existing ->
+                        existing.copy(
+                            longName = newProduct.longName,
+                            shortName = newProduct.shortName,
+                            iowUnitType = newProduct.iowUnitType,
+                            healthyCategory = newProduct.healthyCategory,
+                        )
+                    }
+                }
+
+                try {
+                    if (updatedProducts.isNotEmpty()) {
+                        productRepository.saveAll(updatedProducts).toList()
+                        updated += updatedProducts.size
+                        log.debug { "Batch updated ${updatedProducts.size} existing products" }
+                    }
+                } catch (e: Exception) {
+                    log.error { "Batch update failed, processing individually: ${e.message}" }
+                    // Fallback: process updates individually
+                    updatedProducts.forEach { product ->
+                        try {
+                            productRepository.save(product)
+                            updated++
+                        } catch (ex: Exception) {
+                            errors++
+                            log.error { "Failed to update product with goldId ${product.goldId}: ${ex.message}" }
+                        }
+                    }
+                }
+            }
+
+        } catch (e: Exception) {
+            log.error { "Batch processing failed completely: ${e.message}" }
+            errors += products.size
+        }
+
+        return BatchResult(saved, updated, errors)
+    }
+
+    /**
+     * Result of batch processing operation
+     */
+    data class BatchResult(
+        val saved: Int,
+        val updated: Int,
+        val errors: Int,
+    )
 }
