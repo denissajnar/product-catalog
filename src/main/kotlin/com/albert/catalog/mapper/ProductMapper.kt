@@ -4,10 +4,8 @@ import com.albert.catalog.dto.ProductRequest
 import com.albert.catalog.dto.ProductResponse
 import com.albert.catalog.entity.Product
 import java.time.LocalDateTime
-import java.util.*
 
 fun Product.toResponse(): ProductResponse = ProductResponse(
-    uuid = this.uuid ?: UUID.randomUUID(),
     goldId = this.goldId,
     longName = this.longName,
     shortName = this.shortName,

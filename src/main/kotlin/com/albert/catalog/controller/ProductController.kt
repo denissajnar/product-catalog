@@ -20,7 +20,6 @@ import org.springframework.http.ResponseEntity
 import org.springframework.http.codec.multipart.FilePart
 import org.springframework.validation.annotation.Validated
 import org.springframework.web.bind.annotation.*
-import java.util.*
 
 @Validated
 @RestController
@@ -56,7 +55,7 @@ class ProductController(
 
     @Operation(
         summary = "Get product by ID",
-        description = "Retrieves a specific product by its UUID identifier.",
+        description = "Retrieves a specific product by its id identifier.",
     )
     @ApiResponses(
         value = [
@@ -73,8 +72,8 @@ class ProductController(
         ],
     )
     @GetMapping("/{id}", produces = [MediaType.APPLICATION_JSON_VALUE])
-    suspend fun getProductById(
-        @Parameter(description = "Product UUID", required = true) @PathVariable id: UUID,
+    suspend fun getProductByid(
+        @Parameter(description = "Product id", required = true) @PathVariable id: Long,
     ): ResponseEntity<ProductResponse> =
         productService.findById(id)
             ?.let { ResponseEntity.ok(it) }
@@ -101,7 +100,7 @@ class ProductController(
     )
     @PutMapping("/{id}", produces = [MediaType.APPLICATION_JSON_VALUE])
     suspend fun updateProduct(
-        @Parameter(description = "Product UUID", required = true) @PathVariable id: UUID,
+        @Parameter(description = "Product id", required = true) @PathVariable id: Long,
         @Parameter(
             description = "Updated product data",
             required = true,
@@ -113,7 +112,7 @@ class ProductController(
 
     @Operation(
         summary = "Delete product",
-        description = "Deletes a product by its UUID identifier.",
+        description = "Deletes a product by its id identifier.",
     )
     @ApiResponses(
         value = [
@@ -123,7 +122,7 @@ class ProductController(
     )
     @DeleteMapping("/{id}")
     suspend fun deleteProduct(
-        @Parameter(description = "Product UUID", required = true) @PathVariable id: UUID,
+        @Parameter(description = "Product id", required = true) @PathVariable id: Long,
     ): ResponseEntity<Unit> =
         productService.delete(id)
             .takeIf { it }

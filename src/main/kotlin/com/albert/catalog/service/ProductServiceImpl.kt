@@ -31,11 +31,11 @@ class ProductServiceImpl(
         productRepository.findAllBy(pageable)
             .map { it.toResponse() }
 
-    override suspend fun findById(id: UUID): ProductResponse? =
+    override suspend fun findById(id: Long): ProductResponse? =
         productRepository.findById(id)?.toResponse()
 
     @Transactional
-    override suspend fun update(id: UUID, productRequest: ProductRequest): ProductResponse? {
+    override suspend fun update(id: Long, productRequest: ProductRequest): ProductResponse? {
         val existingProduct = productRepository.findById(id) ?: return null
 
         val updatedProduct = productRequest.toEntity(existingProduct).copy(
@@ -48,7 +48,7 @@ class ProductServiceImpl(
     }
 
     @Transactional
-    override suspend fun delete(id: UUID) =
+    override suspend fun delete(id: Long) =
         if (productRepository.existsById(id)) {
             productRepository.deleteById(id)
             true
@@ -107,17 +107,8 @@ class ProductServiceImpl(
         }
     }
 
-    private suspend fun saveProductsBatch(products: List<Product>) {
-        products.forEach { product ->
-            try {
-                // Create new product without UUID to let database generate it
-                val newProduct = product.copy(uuid = null)
-                productRepository.save(newProduct)
-            } catch (e: Exception) {
-                println("Error saving product with goldId ${product.goldId}: ${e.message}")
-            }
-        }
-    }
+    private suspend fun saveProductsBatch(products: List<Product>) =
+        productRepository.saveAll(products).toList()
 
     private fun parseCsvLine(line: String): Product {
         // Parse CSV line handling quoted values
