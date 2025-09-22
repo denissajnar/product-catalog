@@ -1,5 +1,6 @@
 package com.albert.catalog.service
 
+import com.albert.catalog.dto.ImportStats
 import com.albert.catalog.dto.ProductPageResponse
 import com.albert.catalog.dto.ProductRequest
 import com.albert.catalog.dto.ProductResponse
@@ -28,27 +29,6 @@ class ProductServiceImpl(
         const val DEFAULT_BATCH_SIZE = 1000
         const val FIRST_PAGE_INDEX = 0
         const val PAGE_CALCULATION_OFFSET = 1
-    }
-
-    /**
-     * Data class to track import statistics during product import process.
-     */
-    private data class ImportStats(
-        var imported: Int = 0,
-        var skipped: Int = 0,
-        val existingGoldIds: MutableSet<Long> = mutableSetOf(),
-    ) {
-        fun incrementImported() {
-            imported++
-        }
-
-        fun incrementSkipped() {
-            skipped++
-        }
-
-        fun addSkipped(count: Int) {
-            skipped += count
-        }
     }
 
     /**
