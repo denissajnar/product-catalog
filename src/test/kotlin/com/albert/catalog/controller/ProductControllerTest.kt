@@ -5,6 +5,7 @@ import com.albert.catalog.dto.ProductRequest
 import com.albert.catalog.dto.ProductResponse
 import com.albert.catalog.entity.Product
 import kotlinx.coroutines.runBlocking
+import org.assertj.core.api.SoftAssertions
 import org.hamcrest.Matchers
 import org.junit.jupiter.api.Test
 import org.springframework.core.io.ClassPathResource
@@ -35,7 +36,7 @@ class ProductControllerTest : SpringBootTestParent() {
     @Test
     fun `should create and retrieve product`(): Unit = runBlocking {
         val product = Product(
-            uuid = null,
+            uuid = UUID.randomUUID(),
             goldId = 12345L,
             longName = "Test Product Long Name",
             shortName = "Test Product",
@@ -45,27 +46,33 @@ class ProductControllerTest : SpringBootTestParent() {
             updatedAt = LocalDateTime.now(),
         )
         val savedProduct = productRepository.save(product)
+        val assertions = SoftAssertions()
 
-        webTestClient
+        val response = webTestClient
             .get()
-            .uri("/api/v1/products/${savedProduct.uuid}")
+            .uri("/api/v1/products/${savedProduct.id}")
             .exchange()
             .expectStatus().isOk
             .expectBody<ProductResponse>()
             .returnResult()
-            .responseBody!!
-            .let { response ->
-                assert(response.goldId == 12345L)
-                assert(response.longName == "Test Product Long Name")
-                assert(response.shortName == "Test Product")
-                assert(response.iowUnitType == "EACH")
-                assert(response.healthyCategory == "GREEN")
-            }
+            .responseBody
+
+        assertions.assertThat(response).isNotNull
+
+        response?.let {
+            assertions.assertThat(it.goldId).isEqualTo(12345L)
+            assertions.assertThat(it.longName).isEqualTo("Test Product Long Name")
+            assertions.assertThat(it.shortName).isEqualTo("Test Product")
+            assertions.assertThat(it.iowUnitType).isEqualTo("EACH")
+            assertions.assertThat(it.healthyCategory).isEqualTo("GREEN")
+        }
+
+        assertions.assertAll()
     }
 
     @Test
     fun `should return 404 for non-existent product`() {
-        val nonExistentId = UUID.randomUUID()
+        val nonExistentId = 99999L
 
         webTestClient
             .get()
@@ -78,7 +85,7 @@ class ProductControllerTest : SpringBootTestParent() {
     @Test
     fun `should update existing product`(): Unit = runBlocking {
         val product = Product(
-            uuid = null,
+            uuid = UUID.randomUUID(),
             goldId = 11111L,
             longName = "Original Product",
             shortName = "Original",
@@ -97,27 +104,33 @@ class ProductControllerTest : SpringBootTestParent() {
             healthyCategory = "GREEN",
         )
 
-        webTestClient
+        val assertions = SoftAssertions()
+        val response = webTestClient
             .put()
-            .uri("/api/v1/products/${savedProduct.uuid}")
+            .uri("/api/v1/products/${savedProduct.id}")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(updateRequest)
             .exchange()
             .expectStatus().isOk
             .expectBody<ProductResponse>()
             .returnResult()
-            .responseBody!!
-            .let { response ->
-                assert(response.longName == "Updated Product Long Name")
-                assert(response.shortName == "Updated Product")
-                assert(response.healthyCategory == "GREEN")
-            }
+            .responseBody
+
+        assertions.assertThat(response).isNotNull
+
+        response?.let {
+            assertions.assertThat(it.longName).isEqualTo("Updated Product Long Name")
+            assertions.assertThat(it.shortName).isEqualTo("Updated Product")
+            assertions.assertThat(it.healthyCategory).isEqualTo("GREEN")
+        }
+
+        assertions.assertAll()
     }
 
     @Test
     fun `should delete existing product`(): Unit = runBlocking {
         val product = Product(
-            uuid = null,
+            uuid = UUID.randomUUID(),
             goldId = 22222L,
             longName = "To Delete Product",
             shortName = "To Delete",
@@ -130,20 +143,20 @@ class ProductControllerTest : SpringBootTestParent() {
 
         webTestClient
             .delete()
-            .uri("/api/v1/products/${savedProduct.uuid}")
+            .uri("/api/v1/products/${savedProduct.id}")
             .exchange()
             .expectStatus().isNoContent
 
         webTestClient
             .get()
-            .uri("/api/v1/products/${savedProduct.uuid}")
+            .uri("/api/v1/products/${savedProduct.id}")
             .exchange()
             .expectStatus().isNotFound
     }
 
     @Test
     fun `should return 404 when deleting non-existent product`() {
-        val nonExistentId = UUID.randomUUID()
+        val nonExistentId = 99998L
 
         webTestClient
             .delete()
@@ -154,7 +167,7 @@ class ProductControllerTest : SpringBootTestParent() {
 
     @Test
     fun `should return 404 when updating non-existent product`() {
-        val nonExistentId = UUID.randomUUID()
+        val nonExistentId = 99997L
         val updateRequest = ProductRequest(
             goldId = 99999L,
             longName = "Non-existent Product",
@@ -177,7 +190,7 @@ class ProductControllerTest : SpringBootTestParent() {
         // Create some test products
         val products = listOf(
             Product(
-                uuid = null,
+                uuid = UUID.randomUUID(),
                 goldId = 11111L,
                 longName = "Alpha Product",
                 shortName = "Alpha",
@@ -187,7 +200,7 @@ class ProductControllerTest : SpringBootTestParent() {
                 updatedAt = LocalDateTime.now(),
             ),
             Product(
-                uuid = null,
+                uuid = UUID.randomUUID(),
                 goldId = 22222L,
                 longName = "Beta Product",
                 shortName = "Beta",
@@ -197,7 +210,7 @@ class ProductControllerTest : SpringBootTestParent() {
                 updatedAt = LocalDateTime.now(),
             ),
             Product(
-                uuid = null,
+                uuid = UUID.randomUUID(),
                 goldId = 33333L,
                 longName = "Gamma Product",
                 shortName = "Gamma",
