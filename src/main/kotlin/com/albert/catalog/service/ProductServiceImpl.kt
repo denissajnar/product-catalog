@@ -30,6 +30,111 @@ class ProductServiceImpl(
         const val PAGE_CALCULATION_OFFSET = 1
     }
 
+    /**
+     * Data class to track import statistics during product import process.
+     */
+    private data class ImportStats(
+        var imported: Int = 0,
+        var skipped: Int = 0,
+        val existingGoldIds: MutableSet<Long> = mutableSetOf(),
+    ) {
+        fun incrementImported() {
+            imported++
+        }
+
+        fun incrementSkipped() {
+            skipped++
+        }
+
+        fun addSkipped(count: Int) {
+            skipped += count
+        }
+    }
+
+    /**
+     * Filters out duplicate products from the batch based on already processed goldIds.
+     *
+     * @param products List of products to filter
+     * @param stats Import statistics to track duplicates
+     * @return List of products without duplicates from current session
+     */
+    private fun filterInSessionDuplicates(products: List<Product>, stats: ImportStats): List<Product> {
+        val candidateProducts = products.filter { product ->
+            !stats.existingGoldIds.contains(product.goldId)
+        }
+
+        if (candidateProducts.size < products.size) {
+            stats.addSkipped(products.size - candidateProducts.size)
+        }
+
+        return candidateProducts
+    }
+
+    /**
+     * Filters out products that already exist in the database based on goldId.
+     *
+     * @param products List of products to check against database
+     * @param stats Import statistics to track duplicates and successful imports
+     * @return List of products that don't exist in database and are ready for import
+     */
+    private suspend fun filterDatabaseDuplicates(products: List<Product>, stats: ImportStats): List<Product> {
+        if (products.isEmpty()) return products
+
+        // Batch check for existing goldIds in database
+        val goldIds = products.map { it.goldId }
+        val existingDbGoldIds = productRepository.findByGoldIdIn(goldIds)
+            .map { it.goldId }
+            .toList()
+            .toSet()
+
+        // Filter out products that already exist in database
+        return products.filter { product ->
+            if (existingDbGoldIds.contains(product.goldId)) {
+                stats.incrementSkipped()
+                false
+            } else {
+                stats.existingGoldIds.add(product.goldId)
+                stats.incrementImported()
+                true
+            }
+        }
+    }
+
+    /**
+     * Saves a batch of products to the database.
+     *
+     * @param products List of products to save
+     * @param originalBatchSize Size of the original batch before filtering (for logging)
+     */
+    private suspend fun saveBatch(products: List<Product>, originalBatchSize: Int) {
+        if (products.isNotEmpty()) {
+            productRepository.saveAll(products).collect()
+            log.debug { "Imported batch of ${products.size} products, skipped ${originalBatchSize - products.size}" }
+        }
+    }
+
+    /**
+     * Processes a single batch of products through the complete import pipeline:
+     * filtering in-session duplicates, filtering database duplicates, and saving to database.
+     *
+     * @param products List of products in the current batch
+     * @param stats Import statistics to track progress
+     */
+    private suspend fun processProductBatch(products: List<Product>, stats: ImportStats) {
+        val originalBatchSize = products.size
+
+        // Filter out duplicates from current session
+        val candidateProducts = filterInSessionDuplicates(products, stats)
+
+        if (candidateProducts.isEmpty()) {
+            return
+        }
+
+        // Filter out products that already exist in database and save the remaining ones
+        val productsToSave = filterDatabaseDuplicates(candidateProducts, stats)
+        saveBatch(productsToSave, originalBatchSize)
+    }
+
     override fun findAll(pageable: Pageable): Flow<ProductResponse> =
         productRepository.findAllBy(pageable)
             .map { it.toResponse() }
@@ -92,13 +197,17 @@ class ProductServiceImpl(
         return response
     }
 
+    /**
+     * Imports products from the specified file. The file is expected to contain product data
+     * in CSV format. The method processes the file in batches for memory efficiency and ensures
+     * that duplicate or already existing products (based on their `goldId`) are skipped.
+     *
+     * @param file The file containing product data to be imported.
+     */
     @Transactional
     override suspend fun importProducts(file: FilePart) {
         log.info { "Starting product import: ${file.filename()}" }
-
-        var imported = 0
-        var skipped = 0
-        val existingGoldIds = mutableSetOf<Long>()
+        val stats = ImportStats()
 
         try {
             // Parse CSV and process in batches for memory efficiency
@@ -107,45 +216,13 @@ class ProductServiceImpl(
                 .let { parseCsvLines(it) }
                 .buffer(DEFAULT_BATCH_SIZE)
                 .onEach { products ->
-                    // Filter out duplicates from current batch
-                    val candidateProducts = products.filter { product ->
-                        !existingGoldIds.contains(product.goldId)
-                    }
-
-                    if (candidateProducts.isEmpty()) {
-                        skipped += products.size
-                        return@onEach
-                    }
-
-                    // Batch check for existing goldIds in database
-                    val goldIds = candidateProducts.map { it.goldId }
-                    val existingDbGoldIds = productRepository.findByGoldIdIn(goldIds)
-                        .map { it.goldId }
-                        .toList()
-                        .toSet()
-
-                    // Filter out products that already exist in database
-                    val batch = candidateProducts.filter { product ->
-                        if (existingDbGoldIds.contains(product.goldId)) {
-                            skipped++
-                            false
-                        } else {
-                            existingGoldIds.add(product.goldId)
-                            imported++
-                            true
-                        }
-                    }
-
-                    if (batch.isNotEmpty()) {
-                        productRepository.saveAll(batch).collect()
-                        log.debug { "Imported batch of ${batch.size} products, skipped ${products.size - batch.size}" }
-                    }
+                    processProductBatch(products, stats)
                 }
                 .onCompletion { exception ->
                     if (exception != null) {
                         log.error(exception) { "Error during product import" }
                     } else {
-                        log.info { "Product import completed: imported=$imported, skipped=$skipped" }
+                        log.info { "Product import completed: imported=${stats.imported}, skipped=${stats.skipped}" }
                     }
                 }
                 .collect()
@@ -156,6 +233,14 @@ class ProductServiceImpl(
         }
     }
 
+    /**
+     * Parses a stream of CSV data buffers into a flow of product batches. The first row of the CSV
+     * is treated as a header and skipped during processing. Each batch contains a predefined number
+     * of parsed products, unless the stream ends and a smaller batch remains.
+     *
+     * @param dataBufferFlow A flow of DataBuffer objects representing chunks of CSV data.
+     * @return A flow emitting lists of Product objects parsed from the CSV rows. Each list represents a batch.
+     */
     private fun parseCsvLines(dataBufferFlow: Flow<DataBuffer>): Flow<List<Product>> = flow {
         var headerParsed = false
         var buffer = ""
@@ -236,29 +321,28 @@ class ProductServiceImpl(
 
         while (i < line.length) {
             val char = line[i]
-            when {
-                char == '"' && !inQuotes && (i == 0 || line[i - 1] == ',') -> {
+            when (char) {
+                '"' if !inQuotes && (i == 0 || line[i - 1] == ',') -> {
                     // Start of quoted field
                     inQuotes = true
                 }
 
-                char == '"' && inQuotes && i + 1 < line.length && line[i + 1] == '"' -> {
+                '"' if inQuotes && i + 1 < line.length && line[i + 1] == '"' -> {
                     // Escaped quote within quoted field
                     current.append('"')
                     i++ // Skip the next quote
                 }
 
-                char == '"' && inQuotes && (i == line.length - 1 || line[i + 1] == ',') -> {
+                '"' if inQuotes && (i == line.length - 1 || line[i + 1] == ',') -> {
                     // End of quoted field
                     inQuotes = false
                 }
 
-                char == ',' && !inQuotes -> {
+                ',' if !inQuotes -> {
                     // Field separator
                     fields.add(current.toString())
                     current = StringBuilder()
                 }
-
                 else -> {
                     // Regular character or quoted character
                     if (!(char == '"' && !inQuotes && (i == 0 || line[i - 1] == ','))) {
