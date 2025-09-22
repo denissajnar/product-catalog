@@ -12,6 +12,13 @@ spring:
       host: localhost
       port: 6379
 
+  cache:
+    redis:
+      products:
+        ttl: 30m
+      productPages:
+        ttl: 5m
+
   webflux:
     multipart:
       max-in-memory-size: 10MB
