@@ -73,7 +73,7 @@ Write tests:
 #### 5. CSV Import Feature
 
 Implement a CSV import endpoint that can process the provided
-`product_import_anonymized.csv` [file](product_import_anonymized.csv).
+`product_import_anonymized.csv` [file](src/test/resources/product_import_anonymized.csv).
 
 #### 6. Documentation & API
 
@@ -87,7 +87,8 @@ Implement a CSV import endpoint that can process the provided
 
 You'll have access to:
 
-- **CSV Sample Data**: `product_import_anonymized.csv` [file](product_import_anonymized.csv) with sample products
+- **CSV Sample Data**: `product_import_anonymized.csv` [file](src/test/resources/product_import_anonymized.csv) with
+  sample products
 
 ## 📝 Deliverables
 

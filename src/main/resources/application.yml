@@ -2,16 +2,10 @@ spring:
   application:
     name: product-catalog-service
 
-  r2dbc:
+  datasource:
     url: r2dbc:postgresql://localhost:5432/catalog
     username: catalog_user
     password: catalog_password
-
-  flyway:
-    url: jdbc:postgresql://localhost:5432/catalog
-    user: catalog_user
-    password: catalog_password
-    schemas: catalog
 
   webflux:
     multipart:
@@ -28,6 +22,15 @@ logging:
   level:
     com.albert.catalog: DEBUG
     org.springframework.web: DEBUG
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  show-actuator: true
 
 management:
   endpoints:

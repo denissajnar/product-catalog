@@ -8,8 +8,8 @@ CREATE TABLE IF NOT EXISTS catalog.products
     short_name       VARCHAR(155) NOT NULL,
     iow_unit_type    VARCHAR(100) NOT NULL,
     healthy_category VARCHAR(100) NOT NULL,
-    created_at       TIMESTAMP        DEFAULT CURRENT_TIMESTAMP,
-    updated_at       TIMESTAMP        DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_products_gold_id ON catalog.products (gold_id);

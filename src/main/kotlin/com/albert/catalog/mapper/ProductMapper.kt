@@ -6,17 +6,6 @@ import com.albert.catalog.entity.Product
 import java.time.LocalDateTime
 import java.util.*
 
-fun ProductRequest.toEntity(): Product = Product(
-    uuid = null,
-    goldId = this.goldId,
-    longName = this.longName,
-    shortName = this.shortName,
-    iowUnitType = this.iowUnitType,
-    healthyCategory = this.healthyCategory,
-    createdAt = LocalDateTime.now(),
-    updatedAt = LocalDateTime.now(),
-)
-
 fun Product.toResponse(): ProductResponse = ProductResponse(
     uuid = this.uuid ?: UUID.randomUUID(),
     goldId = this.goldId,

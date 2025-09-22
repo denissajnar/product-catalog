@@ -5,9 +5,13 @@ import com.albert.catalog.dto.ProductRequest
 import com.albert.catalog.dto.ProductResponse
 import com.albert.catalog.entity.Product
 import kotlinx.coroutines.runBlocking
+import org.hamcrest.Matchers
 import org.junit.jupiter.api.Test
+import org.springframework.core.io.ClassPathResource
 import org.springframework.http.MediaType
+import org.springframework.http.client.MultipartBodyBuilder
 import org.springframework.test.web.reactive.server.expectBody
+import org.springframework.web.reactive.function.BodyInserters
 import java.time.LocalDateTime
 import java.util.*
 
@@ -204,7 +208,9 @@ class ProductControllerTest : SpringBootTestParent() {
             ),
         )
 
-        productRepository.saveAll(products).collectList().awaitSingle()
+        productRepository.save(products[0])
+        productRepository.save(products[1])
+        productRepository.save(products[2])
 
         webTestClient
             .get()
@@ -223,25 +229,27 @@ class ProductControllerTest : SpringBootTestParent() {
 
     @Test
     fun `should import products from CSV file`() {
-        val csvContent = """uuid,gold_id,long_name,short_name,iow_unit_type,healthy_category
-d3cd0675-a1f7-4aa6-835c-8191eae20343,72933054,NŮŽKY VELKÉ KOV.,NŮŽKY VELKÉ KOV.,PIECE,Other
-e470ba23-af86-48a3-9519-f3cc0493e860,73842336,UNI B&J PEANUT BUTTER 500ML,UNI B&J PEAN.BUTT500,PIECE,Other"""
+        val csvFile = ClassPathResource("product_import_anonymized.csv")
+
+        val multipartBuilder = MultipartBodyBuilder()
+        multipartBuilder.part("file", csvFile)
+            .filename("product_import_anonymized.csv")
+            .contentType(MediaType.TEXT_PLAIN)
 
         webTestClient
             .post()
             .uri("/api/v1/products/import")
             .contentType(MediaType.MULTIPART_FORM_DATA)
-            .body(org.springframework.web.reactive.function.BodyInserters.fromMultipartData("file", csvContent))
+            .body(BodyInserters.fromMultipartData(multipartBuilder.build()))
             .exchange()
             .expectStatus().isEqualTo(201)
 
-        // Verify products were imported by checking if we can retrieve them
         webTestClient
             .get()
             .uri("/api/v1/products")
             .exchange()
             .expectStatus().isOk
             .expectBody()
-            .jsonPath("$.totalElements").value(org.hamcrest.Matchers.greaterThan(0))
+            .jsonPath("$.totalElements").value(Matchers.greaterThan(0))
     }
 }

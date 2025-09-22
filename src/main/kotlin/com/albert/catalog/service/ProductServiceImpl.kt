@@ -8,7 +8,6 @@ import com.albert.catalog.mapper.toEntity
 import com.albert.catalog.mapper.toResponse
 import com.albert.catalog.repository.ProductRepository
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactive.awaitSingle
@@ -17,6 +16,8 @@ import org.springframework.data.domain.Pageable
 import org.springframework.http.codec.multipart.FilePart
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.nio.charset.StandardCharsets
 import java.time.LocalDateTime
 import java.util.*
@@ -72,36 +73,114 @@ class ProductServiceImpl(
         )
     }
 
+    @Transactional
     override suspend fun importProducts(file: FilePart) {
-        val content = DataBufferUtils.join(file.content())
-            .map { dataBuffer ->
-                val content = dataBuffer.toString(StandardCharsets.UTF_8)
-                DataBufferUtils.release(dataBuffer)
-                content
+        val dataBuffer = DataBufferUtils.join(file.content()).awaitSingle()
+        val inputStream = dataBuffer.asInputStream()
+
+        val products = mutableListOf<Product>()
+        val batchSize = 1000
+
+        BufferedReader(InputStreamReader(inputStream, StandardCharsets.UTF_8)).use { reader ->
+            val header = reader.readLine()
+
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                line?.let { csvLine ->
+                    try {
+                        val product = parseCsvLine(csvLine)
+                        products.add(product)
+
+                        if (products.size >= batchSize) {
+                            saveProductsBatch(products)
+                            products.clear()
+                        }
+                    } catch (e: Exception) {
+                        println("Error processing line: $csvLine - ${e.message}")
+                    }
+                }
             }
-            .awaitSingle()
 
-        val lines = content.lines()
+            if (products.isNotEmpty()) {
+                saveProductsBatch(products)
+            }
+        }
+    }
 
-        lines.drop(1)
-            .filter { it.isNotBlank() }
-            .chunked(1000)
-            .forEach { batch ->
-                val products = batch.mapNotNull { line ->
-                    val parts = line.split(",")
-                    if (parts.size >= 6) {
-                        Product(
-                            uuid = parts[0].trim().takeIf { it.isNotBlank() }?.let { UUID.fromString(it) },
-                            goldId = parts[1].trim().toLongOrNull() ?: 0L,
-                            longName = parts[2].trim(),
-                            shortName = parts[3].trim(),
-                            iowUnitType = parts[4].trim(),
-                            healthyCategory = parts[5].trim(),
-                        )
-                    } else null
+    private suspend fun saveProductsBatch(products: List<Product>) {
+        products.forEach { product ->
+            try {
+                // Create new product without UUID to let database generate it
+                val newProduct = product.copy(uuid = null)
+                productRepository.save(newProduct)
+            } catch (e: Exception) {
+                println("Error saving product with goldId ${product.goldId}: ${e.message}")
+            }
+        }
+    }
+
+    private fun parseCsvLine(line: String): Product {
+        // Parse CSV line handling quoted values
+        val values = parseCsvValues(line)
+
+        if (values.size != 6) {
+            throw IllegalArgumentException("Expected 6 columns, got ${values.size}")
+        }
+
+        return Product(
+            uuid = UUID.fromString(values[0]),
+            goldId = values[1].toLong(),
+            longName = values[2],
+            shortName = values[3],
+            iowUnitType = values[4],
+            healthyCategory = values[5],
+            createdAt = LocalDateTime.now(),
+            updatedAt = LocalDateTime.now(),
+        )
+    }
+
+    private fun parseCsvValues(line: String): List<String> {
+        val values = mutableListOf<String>()
+        val currentValue = StringBuilder()
+        var inQuotes = false
+        var i = 0
+
+        while (i < line.length) {
+            val char = line[i]
+
+            when {
+                char == '"' && !inQuotes -> {
+                    // Starting a quoted field
+                    inQuotes = true
                 }
 
-                productRepository.saveAll(products).collect()
+                char == '"' && inQuotes -> {
+                    // Check if this is an escaped quote or end of quoted field
+                    if (i + 1 < line.length && line[i + 1] == '"') {
+                        // Escaped quote - add one quote to the value and skip the next quote
+                        currentValue.append('"')
+                        i++ // Skip the next quote
+                    } else {
+                        // End of quoted field
+                        inQuotes = false
+                    }
+                }
+
+                char == ',' && !inQuotes -> {
+                    values.add(currentValue.toString().trim())
+                    currentValue.clear()
+                }
+
+                else -> {
+                    currentValue.append(char)
+                }
             }
+            i++
+        }
+
+        // Add the last value
+        values.add(currentValue.toString().trim())
+
+        return values
     }
 }

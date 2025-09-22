@@ -3,7 +3,6 @@ package com.albert.catalog.controller
 import com.albert.catalog.dto.ProductPageResponse
 import com.albert.catalog.dto.ProductRequest
 import com.albert.catalog.dto.ProductResponse
-import com.albert.catalog.repository.ProductRepository
 import com.albert.catalog.service.ProductService
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
@@ -19,15 +18,16 @@ import org.springframework.data.web.PageableDefault
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.http.codec.multipart.FilePart
+import org.springframework.validation.annotation.Validated
 import org.springframework.web.bind.annotation.*
 import java.util.*
 
+@Validated
 @RestController
 @RequestMapping("/api/v1/products")
 @Tag(name = "Product API", description = "Product catalog management operations")
 class ProductController(
     private val productService: ProductService,
-    private val productRepository: ProductRepository,
 ) {
 
     @Operation(
