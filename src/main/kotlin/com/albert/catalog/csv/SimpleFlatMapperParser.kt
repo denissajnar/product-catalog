@@ -17,19 +17,29 @@ import java.nio.charset.StandardCharsets
 class SimpleFlatMapperParser {
     companion object {
         private val log = KotlinLogging.logger {}
+        private val csvMapper =
+            CsvMapperFactory
+                .newInstance()
+                .newMapper(Product::class.java)
     }
 
-    private val csvMapper =
-        CsvMapperFactory
-            .newInstance()
-            .newMapper(Product::class.java)
 
-    fun parseFileStreaming(filePart: FilePart): Flow<Product> =
+    /**
+     * Parses a CSV file provided as a `FilePart` in a streaming manner and emits
+     * each parsed product as a flow of `Product` objects.
+     * This method reads the file content efficiently in chunks, processes it line by line
+     * to handle large files without loading them entirely into memory.
+     *
+     * @param file the file part representing the uploaded CSV file to be parsed
+     * @return a flow of parsed `Product` objects emitted one at a time
+     * @throws Exception if an error occurs during file parsing
+     */
+    fun parseFileStreaming(file: FilePart): Flow<Product> =
         flow {
-            log.info { "Starting CSV parsing for file: ${filePart.filename()}" }
+            log.info { "Starting CSV parsing for file: ${file.filename()}" }
             try {
-                val content = collectFileContent(filePart)
-                log.info { "File content collected, size: ${content.length} characters for file: ${filePart.filename()}" }
+                val content = collectFileContent(file)
+                log.info { "File content collected, size: ${content.length} characters for file: ${file.filename()}" }
 
                 var productCount = 0
                 StringReader(content).use { reader ->
@@ -40,21 +50,30 @@ class SimpleFlatMapperParser {
                         emit(product)
 
                         if (productCount % 100 == 0) {
-                            log.debug { "Parsed $productCount products so far from file: ${filePart.filename()}" }
+                            log.debug { "Parsed $productCount products so far from file: ${file.filename()}" }
                         }
                     }
                 }
-                log.info { "CSV parsing completed for file: ${filePart.filename()}, total products parsed: $productCount" }
+                log.info { "CSV parsing completed for file: ${file.filename()}, total products parsed: $productCount" }
             } catch (ex: Exception) {
-                log.error(ex) { "Error parsing CSV file: ${filePart.filename()}" }
+                log.error(ex) { "Error parsing CSV file: ${file.filename()}" }
                 throw ex
             }
         }.flowOn(Dispatchers.IO)
 
-    private suspend fun collectFileContent(filePart: FilePart): String {
-        log.debug { "Collecting file content for file: ${filePart.filename()}" }
+    /**
+     * Collects and aggregates the content of a file provided as `FilePart`.
+     * This method reads the file content in chunks, reconstructs it as a complete string,
+     * and releases the corresponding buffers after processing.
+     *
+     * @param file the file part representing the uploaded file whose content is to be collected
+     * @return the aggregated content of the file as a single string
+     * @throws Exception if an error occurs during file content collection
+     */
+    private suspend fun collectFileContent(file: FilePart): String =
         try {
-            return filePart.content()
+            log.debug { "Collecting file content for file: ${file.filename()}" }
+            file.content()
                 .asFlow()
                 .map { buffer: DataBuffer ->
                     val content = StringBuilder()
@@ -66,8 +85,7 @@ class SimpleFlatMapperParser {
                 }
                 .reduce { acc: String, chunk: String -> acc + chunk }
         } catch (ex: Exception) {
-            log.error(ex) { "Error collecting file content for file: ${filePart.filename()}" }
+            log.error(ex) { "Error collecting file content for file: ${file.filename()}" }
             throw ex
         }
-    }
 }

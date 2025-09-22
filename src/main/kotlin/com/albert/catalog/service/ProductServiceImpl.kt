@@ -61,6 +61,13 @@ class ProductServiceImpl(
         }
     }
 
+    /**
+     * Retrieves a paginated list of products based on the provided pagination information.
+     *
+     * @param pageable the pagination information, including the page number and page size
+     * @return a ProductPageResponse containing the list of products for the current page,
+     *         along with pagination metadata such as total elements, total pages, and page details
+     */
     @Transactional(readOnly = true)
     override suspend fun getPagedProducts(pageable: Pageable): ProductPageResponse {
         log.debug { "Retrieving paged products: page=${pageable.pageNumber}, size=${pageable.pageSize}" }
@@ -82,6 +89,14 @@ class ProductServiceImpl(
         return response
     }
 
+    /**
+     * Imports products from a CSV file and saves them in batches to the database.
+     * The method processes the file contents in streaming mode to handle large files efficiently.
+     * If the file contains more products than the specified batch size, the products are divided into smaller batches
+     * and saved to the database incrementally.
+     *
+     * @param file The file containing product information to be imported. Expected to be in CSV format.
+     */
     @Transactional
     override suspend fun importProducts(file: FilePart) {
         val batchSize = 1000
