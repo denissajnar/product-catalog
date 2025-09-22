@@ -61,46 +61,48 @@ class JacksonCsvParser {
      *             content of the CSV file.
      * @return a flow of `Product` entities parsed from the CSV file.
      */
-    fun parseFileStreaming(file: FilePart): Flow<Product> = flow {
-        log.info { "Starting efficient streaming CSV parse for: ${file.filename()}" }
+    fun parseFileStreaming(file: FilePart): Flow<Product> =
+        flow {
+            log.info { "Starting efficient streaming CSV parse for: ${file.filename()}" }
 
-        val contentBuffer = StringBuilder()
-        var productCount = 0
-        var isHeaderProcessed = false
+            val contentBuffer = StringBuilder()
+            var productCount = 0
+            var isHeaderProcessed = false
 
-        file.content()
-            .asFlow()
-            .collect { dataBuffer ->
-                val chunk = extractChunkContent(dataBuffer)
-                contentBuffer.append(chunk)
+            file.content()
+                .asFlow()
+                .collect { dataBuffer ->
+                    val chunk = extractChunkContent(dataBuffer)
+                    contentBuffer.append(chunk)
 
-                // Process complete lines from buffer
-                val completeContent = extractCompleteLines(contentBuffer)
+                    // Process complete lines from buffer
+                    val completeContent = extractCompleteLines(contentBuffer)
 
-                if (completeContent.isNotEmpty()) {
-                    // Parse batch of records from complete content
-                    parseRecordsBatch(completeContent, isHeaderProcessed).collect { product ->
-                        emit(product)
-                        productCount++
+                    if (completeContent.isNotEmpty()) {
+                        // Parse batch of records from complete content
+                        parseRecordsBatch(completeContent, isHeaderProcessed).collect { product ->
+                            emit(product)
+                            productCount++
+                        }
+                        isHeaderProcessed = true
                     }
-                    isHeaderProcessed = true
+                }
+
+            // Process any remaining content in buffer
+            val remainingContent = contentBuffer.toString().trim()
+            if (remainingContent.isNotEmpty() && isHeaderProcessed) {
+                // Add header for remaining data lines
+                val headerContent =
+                    "uuid,gold_id,long_name,short_name,iow_unit_type,healthy_category\n$remainingContent"
+
+                parseRecordsBatch(headerContent, true).collect { product ->
+                    emit(product)
+                    productCount++
                 }
             }
 
-        // Process any remaining content in buffer
-        val remainingContent = contentBuffer.toString().trim()
-        if (remainingContent.isNotEmpty() && isHeaderProcessed) {
-            // Add header for remaining data lines
-            val headerContent = "uuid,gold_id,long_name,short_name,iow_unit_type,healthy_category\n$remainingContent"
-
-            parseRecordsBatch(headerContent, true).collect { product ->
-                emit(product)
-                productCount++
-            }
-        }
-
-        log.info { "Streaming parse completed. Parsed $productCount products" }
-    }.flowOn(Dispatchers.IO)
+            log.info { "Streaming parse completed. Parsed $productCount products" }
+        }.flowOn(Dispatchers.IO)
 
     /**
      * Extract complete lines from buffer, keeping incomplete line for next chunk
@@ -142,36 +144,37 @@ class JacksonCsvParser {
      *                   Useful if headers were already processed in previous batches.
      * @return a flow of `Product` entities parsed from the given CSV content.
      */
-    private fun parseRecordsBatch(csvContent: String, skipHeader: Boolean): Flow<Product> = flow {
-        if (csvContent.isBlank()) return@flow
+    private fun parseRecordsBatch(csvContent: String, skipHeader: Boolean): Flow<Product> =
+        flow {
+            if (csvContent.isBlank()) return@flow
 
-        try {
-            StringReader(csvContent).use { reader ->
-                val iterator: MappingIterator<Product> = csvMapper
-                    .readerFor(Product::class.java)
-                    .with(csvSchema)
-                    .readValues(reader)
+            try {
+                StringReader(csvContent).use { reader ->
+                    val iterator: MappingIterator<Product> = csvMapper
+                        .readerFor(Product::class.java)
+                        .with(csvSchema)
+                        .readValues(reader)
 
-                // Skip header if already processed
-                if (skipHeader && iterator.hasNext()) {
-                    iterator.next() // Skip header record
-                }
+                    // Skip header if already processed
+                    if (skipHeader && iterator.hasNext()) {
+                        iterator.next() // Skip header record
+                    }
 
-                // Process all records in this batch
-                while (iterator.hasNext()) {
-                    try {
-                        val product = iterator.next()
-                        emit(product)
-                    } catch (e: Exception) {
-                        log.warn { "Failed to parse CSV record: ${e.message}" }
-                        // Continue processing other records
+                    // Process all records in this batch
+                    while (iterator.hasNext()) {
+                        try {
+                            val product = iterator.next()
+                            emit(product)
+                        } catch (e: Exception) {
+                            log.warn { "Failed to parse CSV record: ${e.message}" }
+                            // Continue processing other records
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                log.error { "Failed to parse CSV batch: ${e.message}" }
             }
-        } catch (e: Exception) {
-            log.error { "Failed to parse CSV batch: ${e.message}" }
         }
-    }
 
     /**
      * Extract content from DataBuffer and release it
