@@ -2,25 +2,24 @@ spring:
   application:
     name: product-catalog-service
 
-  datasource:
-    url: jdbc:postgresql://localhost:5432/catalog
+  r2dbc:
+    url: r2dbc:postgresql://localhost:5432/catalog
     username: catalog_user
     password: catalog_password
-    driver-class-name: org.postgresql.Driver
 
-  jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: true
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
-        format_sql: true
+  flyway:
+    url: jdbc:postgresql://localhost:5432/catalog
+    user: catalog_user
+    password: catalog_password
+    schemas: catalog
 
-  servlet:
+  webflux:
     multipart:
-      max-file-size: 10MB
-      max-request-size: 10MB
+      max-in-memory-size: 10MB
+      max-disk-usage-per-part: 10MB
+  http:
+    codecs:
+      max-in-memory-size: 10MB
 
 server:
   port: 8080
@@ -29,3 +28,9 @@ logging:
   level:
     com.albert.catalog: DEBUG
     org.springframework.web: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
