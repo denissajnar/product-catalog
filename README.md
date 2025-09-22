@@ -1,121 +1,244 @@
-# Albert Team Bootcamp Assignment
+# Product Catalog Service
 
-## Product Catalog Service
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.5-brightgreen?logo=springboot&logoColor=white)](https://spring.io/projects/spring-boot)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.2.20-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org/)
+[![Java](https://img.shields.io/badge/Java-21-ED8B00?logo=openjdk&logoColor=white)](https://openjdk.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Latest-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![Gradle](https://img.shields.io/badge/Gradle-Latest-02303A?logo=gradle&logoColor=white)](https://gradle.org/)
+[![SpringDoc OpenAPI](https://img.shields.io/badge/SpringDoc-2.8.13-6DB33F?logo=swagger&logoColor=white)](https://springdoc.org/)
+[![GraalVM](https://img.shields.io/badge/GraalVM-Native-FF6600?logo=oracle&logoColor=white)](https://www.graalvm.org/)
 
-Welcome to Albert's development team bootcamp! Your task is to build a microservice from scratch that manages product
-catalog information for our e-commerce platform.
+A reactive microservice for managing product catalog information in an e-commerce platform, built with **Spring Boot 3.x
+** and **Kotlin**.
 
-## 🎯 Objective
+## 🚀 Features
 
-Create a complete **Product Catalog Service** from the ground up, demonstrating your ability to:
+- **Reactive REST API** with WebFlux
+- **CRUD Operations** for product management
+- **CSV Import** functionality
+- **Pagination & Sorting** support
+- **Redis Caching** for improved performance
+- **PostgreSQL Database** with R2DBC
+- **API Documentation** with SpringDoc OpenAPI (Swagger UI)
+- **Security** with Spring Security
+- **Docker Support** with multi-stage builds
+- **GraalVM Native Image** support
+- **Comprehensive Testing** with JUnit 5 and MockK
+- **Database Migrations** with Flyway
 
-- Design and implement a REST API
-- Write tests
-- Handle file uploads and data processing
+## 🛠️ Technology Stack
 
-## 📋 Requirements
+| Technology            | Version | Purpose                  |
+|-----------------------|---------|--------------------------|
+| **Spring Boot**       | 3.5.5   | Main framework           |
+| **Kotlin**            | 2.2.20  | Programming language     |
+| **Java**              | 21      | Runtime environment      |
+| **Spring WebFlux**    | Latest  | Reactive web framework   |
+| **Spring Data R2DBC** | Latest  | Reactive database access |
+| **PostgreSQL**        | Latest  | Primary database         |
+| **Redis**             | Latest  | Caching layer            |
+| **SpringDoc OpenAPI** | 2.8.13  | API documentation        |
+| **Flyway**            | Latest  | Database migrations      |
+| **JUnit 5**           | Latest  | Testing framework        |
+| **MockK**             | 1.13.8  | Mocking for Kotlin       |
+| **Testcontainers**    | Latest  | Integration testing      |
+| **Docker**            | Latest  | Containerization         |
+| **GraalVM**           | Latest  | Native compilation       |
 
-### Core Functionality
+## 📋 API Endpoints
 
-You need to implement a REST API with the following endpoints:
+| Method   | Endpoint                  | Description                       |
+|----------|---------------------------|-----------------------------------|
+| `GET`    | `/api/v1/products`        | List all products with pagination |
+| `GET`    | `/api/v1/products/{id}`   | Get product by ID                 |
+| `PUT`    | `/api/v1/products/{id}`   | Update existing product           |
+| `DELETE` | `/api/v1/products/{id}`   | Delete product                    |
+| `POST`   | `/api/v1/products/import` | Import products from CSV file     |
 
-| Method | Endpoint                  | Description                       |
-|--------|---------------------------|-----------------------------------|
-| GET    | `/api/v1/products`        | List all products with pagination |
-| GET    | `/api/v1/products/{id}`   | Get product by ID                 |
-| PUT    | `/api/v1/products/{id}`   | Update existing product           |
-| DELETE | `/api/v1/products/{id}`   | Delete product                    |
-| POST   | `/api/v1/products/import` | Import products from CSV file     |
+### Pagination Example
 
-### Technical Stack
-
-- **Language**: Kotlin
-- **Framework**: Spring Boot 3.x
-- **Database**: PostgreSQL (Docker container)
-- **Build Tool**: Gradle
-- **Java Version**: 21+
-- **Testing**: JUnit 5, MockK (or similar)
-- **Documentation**: SpringDoc OpenAPI
-
-### Implementation Requirements
-
-#### 1. Project Setup
-
-- **Standard Maven/Gradle structure**: `src/main/kotlin`, `src/test/kotlin`
-- **Docker Compose**: PostgreSQL database configuration
-
-#### 2. Validation & Error Handling
-
-- Create a global exception handler
-- Return appropriate HTTP status codes:
-    - 200 OK for successful GET/PUT
-    - 201 Created for successful POST
-    - 204 No Content for successful DELETE
-    - 400 Bad Request for validation errors
-    - 404 Not Found when resource doesn't exist
-    - 500 Internal Server Error for unexpected errors
-
-#### 3. Pagination
-
-Implement pagination for the list endpoint:
-
-```kotlin
+```
 GET /api/v1/products?page=0&size=20&sort=name,asc
 ```
 
-#### 4. Testing
-
-Write tests:
-
-- Cover happy day scenarios
-- Use proper test naming conventions
-
-#### 5. CSV Import Feature
-
-Implement a CSV import endpoint that can process the provided
-`product_import_anonymized.csv` [file](src/test/resources/product_import_anonymized.csv).
-
-#### 6. Documentation & API
-
-- **SpringDoc OpenAPI**: Configure Swagger UI for API documentation
-- **Code Documentation**: Meaningful comments where necessary
-- **API Endpoints**: All endpoints should be documented and accessible via Swagger
-
 ## 🚀 Getting Started
 
-### Provided Resources
+### Prerequisites
 
-You'll have access to:
+- **Java 21+**
+- **Docker & Docker Compose**
+- **Gradle** (wrapper included)
 
-- **CSV Sample Data**: `product_import_anonymized.csv` [file](src/test/resources/product_import_anonymized.csv) with
-  sample products
+### Quick Start
 
-## 📝 Deliverables
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd product-catalog-main
+   ```
 
-Provide a link to your Git repository with the complete project
+2. **Start the infrastructure**
+   ```bash
+   docker-compose up -d
+   ```
 
-## 💡 Bonus Points
+3. **Run the application**
+   ```bash
+   ./gradlew bootRun
+   ```
 
-Impress us with these optional enhancements:
+4. **Access the API Documentation**
+    - Swagger UI: http://localhost:8080/swagger-ui.html
+    - OpenAPI Spec: http://localhost:8080/v3/api-docs
 
-- **Docker**: Containerization with Dockerfile
-- **Caching**: Implement Redis caching
-- **Metrics**: Add application metrics and health checks
-- **Security**: Basic authentication/authorization
-- **Advanced Features**: Search, filtering, or sorting capabilities
+### Development Setup
 
-## 🤝 Need Help?
+1. **Database Setup**
+   ```bash
+   # Start PostgreSQL and Redis
+   docker-compose up -d postgres redis
+   ```
 
-- **Documentation**: Use Spring Boot and Kotlin documentation for reference
-- **Questions**: Don't hesitate to ask clarifying questions about requirements
-- **Focus**: Prioritize working functionality over perfect code
-- **Team Mindset**: Part of the job is supporting other developers—ask for help when needed!
+2. **Run Tests**
+   ```bash
+   ./gradlew test
+   ```
 
-## 📋 Final Notes
+3. **Build Application**
+   ```bash
+   ./gradlew build
+   ```
 
-- **Presentation**: You'll present your solution to us, so keep code well-organized
-- **Maintainability**: Write code that other team members can easily understand and modify
+### Docker Deployment
+
+1. **Build Docker Image**
+   ```bash
+   ./gradlew bootBuildImage
+   ```
+
+2. **Run with Docker Compose**
+   ```bash
+   docker-compose up
+   ```
+
+### Native Image (GraalVM)
+
+1. **Build Native Image**
+   ```bash
+   ./gradlew nativeCompile
+   ```
+
+2. **Build Native Docker Image**
+   ```bash
+   ./gradlew bootBuildImage -Pnative
+   ```
+
+## 📊 Sample Data
+
+The project includes sample CSV data for testing the import functionality:
+
+- Location: `src/test/resources/product_import_anonymized.csv`
+- Use the `/api/v1/products/import` endpoint to import this data
+
+## 🔧 Configuration
+
+### Application Properties
+
+Key configuration options in `application.yml`:
+
+```yaml
+server:
+  port: 8080
+
+spring:
+  r2dbc:
+    url: r2dbc:postgresql://localhost:5432/catalog
+    username: catalog_user
+    password: catalog_pass
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+```
+
+### Environment Variables
+
+| Variable      | Description       | Default      |
+|---------------|-------------------|--------------|
+| `DB_HOST`     | PostgreSQL host   | localhost    |
+| `DB_PORT`     | PostgreSQL port   | 5432         |
+| `DB_NAME`     | Database name     | catalog      |
+| `DB_USERNAME` | Database username | catalog_user |
+| `DB_PASSWORD` | Database password | catalog_pass |
+| `REDIS_HOST`  | Redis host        | localhost    |
+| `REDIS_PORT`  | Redis port        | 6379         |
+
+## 📈 Monitoring & Health
+
+- **Health Check**: `/actuator/health`
+- **Metrics**: `/actuator/metrics`
+- **Info**: `/actuator/info`
+
+## 🧪 Testing
+
+The project includes comprehensive test coverage:
+
+- **Unit Tests**: Service layer and business logic
+- **Integration Tests**: Controller and repository layers
+- **Testcontainers**: Database integration testing
+
+```bash
+# Run all tests
+./gradlew test
+
+# Run tests with coverage
+./gradlew test jacocoTestReport
+```
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+### Code Style
+
+- Follow Kotlin coding conventions
+- Use meaningful variable and function names
+- Write tests for new functionality
+- Update documentation as needed
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🏗️ Architecture
+
+This service follows a clean architecture pattern:
+
+```
+┌─────────────────┐
+│   Controllers   │  ← REST API Layer
+├─────────────────┤
+│    Services     │  ← Business Logic Layer
+├─────────────────┤
+│  Repositories   │  ← Data Access Layer
+├─────────────────┤
+│    Database     │  ← PostgreSQL + Redis
+└─────────────────┘
+```
+
+## 🔍 Performance Features
+
+- **Reactive Programming**: Non-blocking I/O with WebFlux
+- **Connection Pooling**: Optimized database connections
+- **Caching**: Redis-based caching for frequently accessed data
+- **Native Image**: Fast startup and low memory footprint with GraalVM
 
 ---
 
-**Good luck! We're excited to see what you build! 🚀**
+**Happy coding! 🚀**
