@@ -4,6 +4,7 @@ import com.albert.catalog.dto.ProductPageResponse
 import com.albert.catalog.dto.ProductRequest
 import com.albert.catalog.dto.ProductResponse
 import com.albert.catalog.service.ProductService
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.media.Content
@@ -29,6 +30,9 @@ import org.springframework.web.bind.annotation.*
 class ProductController(
     private val productService: ProductService,
 ) {
+    companion object {
+        private val log = KotlinLogging.logger {}
+    }
 
     @Operation(
         summary = "List all products with pagination",
@@ -51,8 +55,12 @@ class ProductController(
     suspend fun getAllProducts(
         @ParameterObject
         @PageableDefault(size = 20, sort = ["longName"], direction = Sort.Direction.ASC) pageable: Pageable,
-    ): ResponseEntity<ProductPageResponse> =
-        ResponseEntity.ok(productService.getPagedProducts(pageable))
+    ): ResponseEntity<ProductPageResponse> {
+        log.info { "Retrieving products with pagination: page=${pageable.pageNumber}, size=${pageable.pageSize}, sort=${pageable.sort}" }
+        val response = productService.getPagedProducts(pageable)
+        log.info { "Retrieved ${response.content.size} products from page ${response.page} of ${response.totalPages}" }
+        return ResponseEntity.ok(response)
+    }
 
     @Operation(
         summary = "Get product by ID",
@@ -75,10 +83,18 @@ class ProductController(
     @GetMapping("/{id}", produces = [MediaType.APPLICATION_JSON_VALUE])
     suspend fun getProductByid(
         @Parameter(description = "Product id", required = true) @PathVariable id: Long,
-    ): ResponseEntity<ProductResponse> =
-        productService.findById(id)
-            ?.let { ResponseEntity.ok(it) }
-            ?: ResponseEntity.notFound().build()
+    ): ResponseEntity<ProductResponse> {
+        log.info { "Retrieving product with id: $id" }
+        return productService.findById(id)
+            ?.let {
+                log.info { "Product found with id: $id" }
+                ResponseEntity.ok(it)
+            }
+            ?: run {
+                log.warn { "Product not found with id: $id" }
+                ResponseEntity.notFound().build()
+            }
+    }
 
     @Operation(
         summary = "Update existing product",
@@ -106,10 +122,18 @@ class ProductController(
             description = "Updated product data",
             required = true,
         ) @Valid @RequestBody productRequest: ProductRequest,
-    ): ResponseEntity<ProductResponse> =
-        productService.update(id, productRequest)
-            ?.let { ResponseEntity.ok(it) }
-            ?: ResponseEntity.notFound().build()
+    ): ResponseEntity<ProductResponse> {
+        log.info { "Updating product with id: $id" }
+        return productService.update(id, productRequest)
+            ?.let {
+                log.info { "Product updated successfully with id: $id" }
+                ResponseEntity.ok(it)
+            }
+            ?: run {
+                log.warn { "Product not found for update with id: $id" }
+                ResponseEntity.notFound().build()
+            }
+    }
 
     @Operation(
         summary = "Delete product",
@@ -124,11 +148,19 @@ class ProductController(
     @DeleteMapping("/{id}")
     suspend fun deleteProduct(
         @Parameter(description = "Product id", required = true) @PathVariable id: Long,
-    ): ResponseEntity<Unit> =
-        productService.delete(id)
+    ): ResponseEntity<Unit> {
+        log.info { "Deleting product with id: $id" }
+        return productService.delete(id)
             .takeIf { it }
-            ?.let { ResponseEntity.noContent().build() }
-            ?: ResponseEntity.notFound().build()
+            ?.let {
+                log.info { "Product deleted successfully with id: $id" }
+                ResponseEntity.noContent().build()
+            }
+            ?: run {
+                log.warn { "Product not found for deletion with id: $id" }
+                ResponseEntity.notFound().build()
+            }
+    }
 
     @Operation(
         summary = "Import products from CSV file",
@@ -145,8 +177,14 @@ class ProductController(
         @Parameter(description = "CSV file containing products to import", required = true)
         @RequestPart("file") file: FilePart,
     ): ResponseEntity<Unit> {
-        productService.importProducts(file)
-
-        return ResponseEntity.status(201).build()
+        log.info { "Starting product import from file: ${file.filename()}" }
+        try {
+            productService.importProducts(file)
+            log.info { "Product import completed successfully for file: ${file.filename()}" }
+            return ResponseEntity.status(201).build()
+        } catch (ex: Exception) {
+            log.error(ex) { "Product import failed for file: ${file.filename()}" }
+            throw ex
+        }
     }
 }
