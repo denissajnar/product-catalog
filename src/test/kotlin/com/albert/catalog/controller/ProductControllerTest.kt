@@ -3,7 +3,7 @@ package com.albert.catalog.controller
 import com.albert.catalog.SpringBootTestParent
 import com.albert.catalog.dto.ProductRequest
 import com.albert.catalog.dto.ProductResponse
-import com.albert.catalog.entity.Product
+import com.albert.catalog.factory.createProduct
 import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.SoftAssertions
 import org.hamcrest.Matchers
@@ -13,7 +13,6 @@ import org.springframework.http.MediaType
 import org.springframework.http.client.MultipartBodyBuilder
 import org.springframework.test.web.reactive.server.expectBody
 import org.springframework.web.reactive.function.BodyInserters
-import java.time.LocalDateTime
 import java.util.*
 
 class ProductControllerTest : SpringBootTestParent() {
@@ -35,16 +34,7 @@ class ProductControllerTest : SpringBootTestParent() {
 
     @Test
     fun `should create and retrieve product`(): Unit = runBlocking {
-        val product = Product(
-            uuid = UUID.randomUUID(),
-            goldId = 12345L,
-            longName = "Test Product Long Name",
-            shortName = "Test Product",
-            iowUnitType = "EACH",
-            healthyCategory = "GREEN",
-            createdAt = LocalDateTime.now(),
-            updatedAt = LocalDateTime.now(),
-        )
+        val product = createProduct()
         val savedProduct = productRepository.save(product)
         val assertions = SoftAssertions()
 
@@ -60,11 +50,11 @@ class ProductControllerTest : SpringBootTestParent() {
         assertions.assertThat(response).isNotNull
 
         response?.let {
-            assertions.assertThat(it.goldId).isEqualTo(12345L)
-            assertions.assertThat(it.longName).isEqualTo("Test Product Long Name")
-            assertions.assertThat(it.shortName).isEqualTo("Test Product")
-            assertions.assertThat(it.iowUnitType).isEqualTo("EACH")
-            assertions.assertThat(it.healthyCategory).isEqualTo("GREEN")
+            assertions.assertThat(it.goldId).isEqualTo(product.goldId)
+            assertions.assertThat(it.longName).isEqualTo(product.longName)
+            assertions.assertThat(it.shortName).isEqualTo(product.shortName)
+            assertions.assertThat(it.iowUnitType).isEqualTo(product.iowUnitType)
+            assertions.assertThat(it.healthyCategory).isEqualTo(product.healthyCategory)
         }
 
         assertions.assertAll()
@@ -84,15 +74,13 @@ class ProductControllerTest : SpringBootTestParent() {
 
     @Test
     fun `should update existing product`(): Unit = runBlocking {
-        val product = Product(
+        val product = createProduct(
             uuid = UUID.randomUUID(),
             goldId = 11111L,
             longName = "Original Product",
             shortName = "Original",
             iowUnitType = "LITER",
             healthyCategory = "RED",
-            createdAt = LocalDateTime.now(),
-            updatedAt = LocalDateTime.now(),
         )
         val savedProduct = productRepository.save(product)
 
@@ -129,15 +117,13 @@ class ProductControllerTest : SpringBootTestParent() {
 
     @Test
     fun `should delete existing product`(): Unit = runBlocking {
-        val product = Product(
+        val product = createProduct(
             uuid = UUID.randomUUID(),
             goldId = 22222L,
             longName = "To Delete Product",
             shortName = "To Delete",
             iowUnitType = "EACH",
             healthyCategory = "AMBER",
-            createdAt = LocalDateTime.now(),
-            updatedAt = LocalDateTime.now(),
         )
         val savedProduct = productRepository.save(product)
 
@@ -188,35 +174,29 @@ class ProductControllerTest : SpringBootTestParent() {
     @Test
     fun `should get products with custom pagination`(): Unit = runBlocking {
         val products = listOf(
-            Product(
+            createProduct(
                 uuid = UUID.randomUUID(),
                 goldId = 11111L,
                 longName = "Alpha Product",
                 shortName = "Alpha",
                 iowUnitType = "PIECE",
                 healthyCategory = "GREEN",
-                createdAt = LocalDateTime.now(),
-                updatedAt = LocalDateTime.now(),
             ),
-            Product(
+            createProduct(
                 uuid = UUID.randomUUID(),
                 goldId = 22222L,
                 longName = "Beta Product",
                 shortName = "Beta",
                 iowUnitType = "PIECE",
                 healthyCategory = "GREEN",
-                createdAt = LocalDateTime.now(),
-                updatedAt = LocalDateTime.now(),
             ),
-            Product(
+            createProduct(
                 uuid = UUID.randomUUID(),
                 goldId = 33333L,
                 longName = "Gamma Product",
                 shortName = "Gamma",
                 iowUnitType = "PIECE",
                 healthyCategory = "GREEN",
-                createdAt = LocalDateTime.now(),
-                updatedAt = LocalDateTime.now(),
             ),
         )
 
@@ -267,20 +247,18 @@ class ProductControllerTest : SpringBootTestParent() {
 
     @Test
     fun `should return 400 when updating product with invalid goldId`(): Unit = runBlocking {
-        val product = Product(
+        val product = createProduct(
             uuid = UUID.randomUUID(),
             goldId = 12345L,
             longName = "Test Product",
             shortName = "Test",
             iowUnitType = "EACH",
             healthyCategory = "GREEN",
-            createdAt = LocalDateTime.now(),
-            updatedAt = LocalDateTime.now(),
         )
         val savedProduct = productRepository.save(product)
 
         val invalidRequest = ProductRequest(
-            goldId = -1L, // Invalid: negative goldId
+            goldId = -1L,
             longName = "Updated Product",
             shortName = "Updated",
             iowUnitType = "EACH",
@@ -298,21 +276,20 @@ class ProductControllerTest : SpringBootTestParent() {
 
     @Test
     fun `should return 400 when updating product with blank longName`(): Unit = runBlocking {
-        val product = Product(
-            uuid = UUID.randomUUID(),
-            goldId = 12345L,
-            longName = "Test Product",
-            shortName = "Test",
-            iowUnitType = "EACH",
-            healthyCategory = "GREEN",
-            createdAt = LocalDateTime.now(),
-            updatedAt = LocalDateTime.now(),
-        )
+        val product =
+            createProduct(
+                uuid = UUID.randomUUID(),
+                goldId = 12345L,
+                longName = "Test Product",
+                shortName = "Test",
+                iowUnitType = "EACH",
+                healthyCategory = "GREEN",
+            )
         val savedProduct = productRepository.save(product)
 
         val invalidRequest = ProductRequest(
             goldId = 12345L,
-            longName = "  ", // Invalid: blank longName
+            longName = "  ",
             shortName = "Updated",
             iowUnitType = "EACH",
             healthyCategory = "GREEN",
@@ -329,22 +306,20 @@ class ProductControllerTest : SpringBootTestParent() {
 
     @Test
     fun `should return 400 when updating product with blank shortName`(): Unit = runBlocking {
-        val product = Product(
+        val product = createProduct(
             uuid = UUID.randomUUID(),
             goldId = 12345L,
             longName = "Test Product",
             shortName = "Test",
             iowUnitType = "EACH",
             healthyCategory = "GREEN",
-            createdAt = LocalDateTime.now(),
-            updatedAt = LocalDateTime.now(),
         )
         val savedProduct = productRepository.save(product)
 
         val invalidRequest = ProductRequest(
             goldId = 12345L,
             longName = "Updated Product",
-            shortName = "", // Invalid: empty shortName
+            shortName = "",
             iowUnitType = "EACH",
             healthyCategory = "GREEN",
         )
@@ -361,32 +336,27 @@ class ProductControllerTest : SpringBootTestParent() {
     @Test
     fun `should get products with different sorting options`(): Unit = runBlocking {
         val products = listOf(
-            Product(
+            createProduct(
                 uuid = UUID.randomUUID(),
                 goldId = 30000L,
                 longName = "Zebra Product",
                 shortName = "Zebra",
                 iowUnitType = "PIECE",
                 healthyCategory = "RED",
-                createdAt = LocalDateTime.now(),
-                updatedAt = LocalDateTime.now(),
             ),
-            Product(
+            createProduct(
                 uuid = UUID.randomUUID(),
                 goldId = 10000L,
                 longName = "Alpha Product",
                 shortName = "Alpha",
                 iowUnitType = "EACH",
                 healthyCategory = "GREEN",
-                createdAt = LocalDateTime.now(),
-                updatedAt = LocalDateTime.now(),
             ),
         )
 
         productRepository.save(products[0])
         productRepository.save(products[1])
 
-        // Test sort by goldId ascending
         webTestClient
             .get()
             .uri("/api/v1/products?sort=goldId,asc")
@@ -396,7 +366,6 @@ class ProductControllerTest : SpringBootTestParent() {
             .jsonPath("$.content[0].goldId").isEqualTo(10000)
             .jsonPath("$.content[1].goldId").isEqualTo(30000)
 
-        // Test sort by goldId descending
         webTestClient
             .get()
             .uri("/api/v1/products?sort=goldId,desc")
@@ -406,7 +375,6 @@ class ProductControllerTest : SpringBootTestParent() {
             .jsonPath("$.content[0].goldId").isEqualTo(30000)
             .jsonPath("$.content[1].goldId").isEqualTo(10000)
 
-        // Test sort by shortName ascending
         webTestClient
             .get()
             .uri("/api/v1/products?sort=shortName,asc")
@@ -419,19 +387,16 @@ class ProductControllerTest : SpringBootTestParent() {
 
     @Test
     fun `should handle edge cases for pagination`(): Unit = runBlocking {
-        val product = Product(
+        val product = createProduct(
             uuid = UUID.randomUUID(),
             goldId = 99999L,
             longName = "Single Product",
             shortName = "Single",
             iowUnitType = "EACH",
             healthyCategory = "GREEN",
-            createdAt = LocalDateTime.now(),
-            updatedAt = LocalDateTime.now(),
         )
         productRepository.save(product)
 
-        // Test page beyond available data
         webTestClient
             .get()
             .uri("/api/v1/products?page=999&size=10")
@@ -443,7 +408,6 @@ class ProductControllerTest : SpringBootTestParent() {
             .jsonPath("$.page").isEqualTo(999)
             .jsonPath("$.totalElements").isEqualTo(1)
 
-        // Test with very large page size
         webTestClient
             .get()
             .uri("/api/v1/products?page=0&size=1000")
@@ -457,14 +421,12 @@ class ProductControllerTest : SpringBootTestParent() {
 
     @Test
     fun `should return 404 for invalid ID formats`() {
-        // Test with zero ID
         webTestClient
             .get()
             .uri("/api/v1/products/0")
             .exchange()
             .expectStatus().isNotFound
 
-        // Test with negative ID
         webTestClient
             .get()
             .uri("/api/v1/products/-1")
@@ -474,19 +436,16 @@ class ProductControllerTest : SpringBootTestParent() {
 
     @Test
     fun `should verify product data consistency after multiple operations`(): Unit = runBlocking {
-        val originalProduct = Product(
+        val originalProduct = createProduct(
             uuid = UUID.randomUUID(),
             goldId = 55555L,
             longName = "Consistency Test Product",
             shortName = "Consistency",
             iowUnitType = "LITER",
             healthyCategory = "AMBER",
-            createdAt = LocalDateTime.now(),
-            updatedAt = LocalDateTime.now(),
         )
         val savedProduct = productRepository.save(originalProduct)
 
-        // First update
         val firstUpdate = ProductRequest(
             goldId = 55555L,
             longName = "First Update",
@@ -515,7 +474,6 @@ class ProductControllerTest : SpringBootTestParent() {
             assertions.assertThat(it.healthyCategory).isEqualTo("GREEN")
         }
 
-        // Second update
         val secondUpdate = ProductRequest(
             goldId = 55555L,
             longName = "Second Update",
@@ -544,7 +502,6 @@ class ProductControllerTest : SpringBootTestParent() {
             assertions.assertThat(it.healthyCategory).isEqualTo("RED")
         }
 
-        // Verify final state by retrieving the product
         val finalResponse = webTestClient
             .get()
             .uri("/api/v1/products/${savedProduct.id}")

@@ -25,6 +25,9 @@ class ProductServiceImpl(
 
     companion object {
         private val log = KotlinLogging.logger {}
+        const val DEFAULT_BATCH_SIZE = 1000
+        const val FIRST_PAGE_INDEX = 0
+        const val PAGE_CALCULATION_OFFSET = 1
     }
 
     override fun findAll(pageable: Pageable): Flow<ProductResponse> =
@@ -81,8 +84,8 @@ class ProductServiceImpl(
             size = pageable.pageSize,
             totalElements = totalElements,
             totalPages = totalPages,
-            first = pageable.pageNumber == 0,
-            last = pageable.pageNumber >= totalPages - 1,
+            first = pageable.pageNumber == FIRST_PAGE_INDEX,
+            last = pageable.pageNumber >= totalPages - PAGE_CALCULATION_OFFSET,
         )
 
         log.debug { "Paged products retrieved: ${products.size} items on page ${pageable.pageNumber} of $totalPages total pages" }
@@ -99,19 +102,18 @@ class ProductServiceImpl(
      */
     @Transactional
     override suspend fun importProducts(file: FilePart) {
-        val batchSize = 1000
         val products = mutableListOf<Product>()
         var totalProcessed = 0
         var batchCount = 0
 
-        log.info { "Starting product import with batch size: $batchSize" }
+        log.info { "Starting product import with batch size: $DEFAULT_BATCH_SIZE" }
 
         simpleFlatMapperParser.parseFileStreaming(file)
             .collect { product ->
                 products.add(product)
                 totalProcessed++
 
-                if (products.size >= batchSize) {
+                if (products.size >= DEFAULT_BATCH_SIZE) {
                     batchCount++
                     log.info { "Processing batch $batchCount with ${products.size} products" }
                     productRepository.saveAll(products).toList()

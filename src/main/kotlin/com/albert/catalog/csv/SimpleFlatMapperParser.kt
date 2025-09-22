@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets
 @Component
 class SimpleFlatMapperParser {
     companion object {
+        private const val PROGRESS_LOG_INTERVAL = 100
         private val log = KotlinLogging.logger {}
         private val csvMapper =
             CsvMapperFactory
@@ -49,7 +50,7 @@ class SimpleFlatMapperParser {
                         productCount++
                         emit(product)
 
-                        if (productCount % 100 == 0) {
+                        if (productCount % PROGRESS_LOG_INTERVAL == 0) {
                             log.debug { "Parsed $productCount products so far from file: ${file.filename()}" }
                         }
                     }
