@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.reactive.asFlow
+import org.springframework.core.io.buffer.DataBuffer
 import org.springframework.core.io.buffer.DataBufferUtils
 import org.springframework.http.codec.multipart.FilePart
 import org.springframework.stereotype.Component
@@ -24,10 +25,7 @@ class JacksonCsvParser {
 
     companion object {
         private val log = KotlinLogging.logger {}
-
-        // Configure Jackson CSV mapper
         private val csvMapper = CsvMapper().apply {
-            // Register Kotlin module for better Kotlin support
             registerModule(
                 KotlinModule.Builder()
                     .withReflectionCacheSize(512)
@@ -39,12 +37,10 @@ class JacksonCsvParser {
                     .build(),
             )
 
-            // Configure for lenient parsing
             configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
             configure(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES, false)
         }
 
-        // Define CSV schema - matches your CSV headers
         private val csvSchema = CsvSchema.builder()
             .addColumn("uuid")
             .addColumn("gold_id")
@@ -52,13 +48,18 @@ class JacksonCsvParser {
             .addColumn("short_name")
             .addColumn("iow_unit_type")
             .addColumn("healthy_category")
-            .setUseHeader(true) // First row is header
+            .setUseHeader(true)
             .build()
     }
 
     /**
-     * Efficient streaming CSV parser that processes records in batches
-     * instead of creating new readers/iterators for each line
+     * Parses a provided CSV file in a streaming manner and converts the entries into a flow of `Product` entities.
+     * This method efficiently processes the file content in chunks to minimize memory usage, making it suitable
+     * for handling large files.
+     *
+     * @param file the file to be parsed, represented as a `FilePart`. It contains the streamable
+     *             content of the CSV file.
+     * @return a flow of `Product` entities parsed from the CSV file.
      */
     fun parseFileStreaming(file: FilePart): Flow<Product> = flow {
         log.info { "Starting efficient streaming CSV parse for: ${file.filename()}" }
@@ -131,7 +132,15 @@ class JacksonCsvParser {
     }
 
     /**
-     * Parse a batch of CSV records efficiently using a single MappingIterator
+     * Parses a batch of CSV content and emits `Product` entities as a flow.
+     * This function processes the CSV content in a streaming manner, allowing for efficient batch validation
+     * and avoiding memory overloading. Invalid records are skipped with a warning logged,
+     * while parsing continues with the remaining records.
+     *
+     * @param csvContent the CSV content to parse, represented as a string.
+     * @param skipHeader a flag indicating whether the header in the CSV content should be skipped.
+     *                   Useful if headers were already processed in previous batches.
+     * @return a flow of `Product` entities parsed from the given CSV content.
      */
     private fun parseRecordsBatch(csvContent: String, skipHeader: Boolean): Flow<Product> = flow {
         if (csvContent.isBlank()) return@flow
@@ -167,13 +176,12 @@ class JacksonCsvParser {
     /**
      * Extract content from DataBuffer and release it
      */
-    private fun extractChunkContent(dataBuffer: org.springframework.core.io.buffer.DataBuffer): String {
-        return try {
+    private fun extractChunkContent(dataBuffer: DataBuffer): String =
+        try {
             val bytes = ByteArray(dataBuffer.readableByteCount())
             dataBuffer.read(bytes)
             String(bytes, StandardCharsets.UTF_8)
         } finally {
             DataBufferUtils.release(dataBuffer)
         }
-    }
 }

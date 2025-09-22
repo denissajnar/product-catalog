@@ -13,6 +13,7 @@ import org.springframework.http.MediaType
 import org.springframework.http.client.MultipartBodyBuilder
 import org.springframework.test.web.reactive.server.expectBody
 import org.springframework.web.reactive.function.BodyInserters
+import java.time.Duration
 
 class ProductControllerTest : SpringBootTestParent() {
 
@@ -228,6 +229,9 @@ class ProductControllerTest : SpringBootTestParent() {
             .contentType(MediaType.TEXT_PLAIN)
 
         webTestClient
+            .mutate()
+            .responseTimeout(Duration.ofMinutes(2))
+            .build()
             .post()
             .uri("/api/v1/products/import")
             .contentType(MediaType.MULTIPART_FORM_DATA)

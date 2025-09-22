@@ -1,6 +1,7 @@
 package com.albert.catalog.service
 
 import com.albert.catalog.csv.JacksonCsvParser
+import com.albert.catalog.dto.BatchResult
 import com.albert.catalog.dto.ProductPageResponse
 import com.albert.catalog.dto.ProductRequest
 import com.albert.catalog.dto.ProductResponse
@@ -93,9 +94,12 @@ class ProductServiceImpl(
     }
 
     /**
-     * Imports products from CSV with efficient batch processing and duplicate handling
-     * Each batch is processed in a separate transaction for better performance and error recovery
+     * Imports products from a file provided as input. The method processes the file in batches,
+     * saving new products, updating existing ones, and counting any errors encountered during the process.
+     *
+     * @param file the CSV file containing product data to be imported
      */
+    @Transactional
     override suspend fun importProducts(file: FilePart) {
         log.info { "Starting efficient product import with batch size: $DEFAULT_BATCH_SIZE" }
 
@@ -147,7 +151,13 @@ class ProductServiceImpl(
     }
 
     /**
-     * Process a batch of products in a single transaction with efficient duplicate handling
+     * Processes a batch of products by either inserting new records or updating existing ones
+     * based on their unique identifiers (goldId). Handles errors gracefully and provides
+     * detailed results of the processing in a batch result.
+     *
+     * @param products A list of products to be processed. Each product is either inserted (if new)
+     *                 or updated (if existing) based on its goldId.
+     * @return A BatchResult object containing the counts of successfully saved, updated, and failed products.
      */
     @Transactional
     suspend fun processBatch(products: List<Product>): BatchResult {
@@ -228,13 +238,4 @@ class ProductServiceImpl(
 
         return BatchResult(saved, updated, errors)
     }
-
-    /**
-     * Result of batch processing operation
-     */
-    data class BatchResult(
-        val saved: Int,
-        val updated: Int,
-        val errors: Int,
-    )
 }
