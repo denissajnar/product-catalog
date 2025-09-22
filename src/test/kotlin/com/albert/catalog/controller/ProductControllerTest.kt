@@ -187,7 +187,6 @@ class ProductControllerTest : SpringBootTestParent() {
 
     @Test
     fun `should get products with custom pagination`(): Unit = runBlocking {
-        // Create some test products
         val products = listOf(
             Product(
                 uuid = UUID.randomUUID(),
@@ -264,5 +263,306 @@ class ProductControllerTest : SpringBootTestParent() {
             .expectStatus().isOk
             .expectBody()
             .jsonPath("$.totalElements").value(Matchers.greaterThan(0))
+    }
+
+    @Test
+    fun `should return 400 when updating product with invalid goldId`(): Unit = runBlocking {
+        val product = Product(
+            uuid = UUID.randomUUID(),
+            goldId = 12345L,
+            longName = "Test Product",
+            shortName = "Test",
+            iowUnitType = "EACH",
+            healthyCategory = "GREEN",
+            createdAt = LocalDateTime.now(),
+            updatedAt = LocalDateTime.now(),
+        )
+        val savedProduct = productRepository.save(product)
+
+        val invalidRequest = ProductRequest(
+            goldId = -1L, // Invalid: negative goldId
+            longName = "Updated Product",
+            shortName = "Updated",
+            iowUnitType = "EACH",
+            healthyCategory = "GREEN",
+        )
+
+        webTestClient
+            .put()
+            .uri("/api/v1/products/${savedProduct.id}")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(invalidRequest)
+            .exchange()
+            .expectStatus().isBadRequest
+    }
+
+    @Test
+    fun `should return 400 when updating product with blank longName`(): Unit = runBlocking {
+        val product = Product(
+            uuid = UUID.randomUUID(),
+            goldId = 12345L,
+            longName = "Test Product",
+            shortName = "Test",
+            iowUnitType = "EACH",
+            healthyCategory = "GREEN",
+            createdAt = LocalDateTime.now(),
+            updatedAt = LocalDateTime.now(),
+        )
+        val savedProduct = productRepository.save(product)
+
+        val invalidRequest = ProductRequest(
+            goldId = 12345L,
+            longName = "  ", // Invalid: blank longName
+            shortName = "Updated",
+            iowUnitType = "EACH",
+            healthyCategory = "GREEN",
+        )
+
+        webTestClient
+            .put()
+            .uri("/api/v1/products/${savedProduct.id}")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(invalidRequest)
+            .exchange()
+            .expectStatus().isBadRequest
+    }
+
+    @Test
+    fun `should return 400 when updating product with blank shortName`(): Unit = runBlocking {
+        val product = Product(
+            uuid = UUID.randomUUID(),
+            goldId = 12345L,
+            longName = "Test Product",
+            shortName = "Test",
+            iowUnitType = "EACH",
+            healthyCategory = "GREEN",
+            createdAt = LocalDateTime.now(),
+            updatedAt = LocalDateTime.now(),
+        )
+        val savedProduct = productRepository.save(product)
+
+        val invalidRequest = ProductRequest(
+            goldId = 12345L,
+            longName = "Updated Product",
+            shortName = "", // Invalid: empty shortName
+            iowUnitType = "EACH",
+            healthyCategory = "GREEN",
+        )
+
+        webTestClient
+            .put()
+            .uri("/api/v1/products/${savedProduct.id}")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(invalidRequest)
+            .exchange()
+            .expectStatus().isBadRequest
+    }
+
+    @Test
+    fun `should get products with different sorting options`(): Unit = runBlocking {
+        val products = listOf(
+            Product(
+                uuid = UUID.randomUUID(),
+                goldId = 30000L,
+                longName = "Zebra Product",
+                shortName = "Zebra",
+                iowUnitType = "PIECE",
+                healthyCategory = "RED",
+                createdAt = LocalDateTime.now(),
+                updatedAt = LocalDateTime.now(),
+            ),
+            Product(
+                uuid = UUID.randomUUID(),
+                goldId = 10000L,
+                longName = "Alpha Product",
+                shortName = "Alpha",
+                iowUnitType = "EACH",
+                healthyCategory = "GREEN",
+                createdAt = LocalDateTime.now(),
+                updatedAt = LocalDateTime.now(),
+            ),
+        )
+
+        productRepository.save(products[0])
+        productRepository.save(products[1])
+
+        // Test sort by goldId ascending
+        webTestClient
+            .get()
+            .uri("/api/v1/products?sort=goldId,asc")
+            .exchange()
+            .expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.content[0].goldId").isEqualTo(10000)
+            .jsonPath("$.content[1].goldId").isEqualTo(30000)
+
+        // Test sort by goldId descending
+        webTestClient
+            .get()
+            .uri("/api/v1/products?sort=goldId,desc")
+            .exchange()
+            .expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.content[0].goldId").isEqualTo(30000)
+            .jsonPath("$.content[1].goldId").isEqualTo(10000)
+
+        // Test sort by shortName ascending
+        webTestClient
+            .get()
+            .uri("/api/v1/products?sort=shortName,asc")
+            .exchange()
+            .expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.content[0].shortName").isEqualTo("Alpha")
+            .jsonPath("$.content[1].shortName").isEqualTo("Zebra")
+    }
+
+    @Test
+    fun `should handle edge cases for pagination`(): Unit = runBlocking {
+        val product = Product(
+            uuid = UUID.randomUUID(),
+            goldId = 99999L,
+            longName = "Single Product",
+            shortName = "Single",
+            iowUnitType = "EACH",
+            healthyCategory = "GREEN",
+            createdAt = LocalDateTime.now(),
+            updatedAt = LocalDateTime.now(),
+        )
+        productRepository.save(product)
+
+        // Test page beyond available data
+        webTestClient
+            .get()
+            .uri("/api/v1/products?page=999&size=10")
+            .exchange()
+            .expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.content").isArray
+            .jsonPath("$.content.length()").isEqualTo(0)
+            .jsonPath("$.page").isEqualTo(999)
+            .jsonPath("$.totalElements").isEqualTo(1)
+
+        // Test with very large page size
+        webTestClient
+            .get()
+            .uri("/api/v1/products?page=0&size=1000")
+            .exchange()
+            .expectStatus().isOk
+            .expectBody()
+            .jsonPath("$.content").isArray
+            .jsonPath("$.size").isEqualTo(1000)
+            .jsonPath("$.totalElements").isEqualTo(1)
+    }
+
+    @Test
+    fun `should return 404 for invalid ID formats`() {
+        // Test with zero ID
+        webTestClient
+            .get()
+            .uri("/api/v1/products/0")
+            .exchange()
+            .expectStatus().isNotFound
+
+        // Test with negative ID
+        webTestClient
+            .get()
+            .uri("/api/v1/products/-1")
+            .exchange()
+            .expectStatus().isNotFound
+    }
+
+    @Test
+    fun `should verify product data consistency after multiple operations`(): Unit = runBlocking {
+        val originalProduct = Product(
+            uuid = UUID.randomUUID(),
+            goldId = 55555L,
+            longName = "Consistency Test Product",
+            shortName = "Consistency",
+            iowUnitType = "LITER",
+            healthyCategory = "AMBER",
+            createdAt = LocalDateTime.now(),
+            updatedAt = LocalDateTime.now(),
+        )
+        val savedProduct = productRepository.save(originalProduct)
+
+        // First update
+        val firstUpdate = ProductRequest(
+            goldId = 55555L,
+            longName = "First Update",
+            shortName = "First",
+            iowUnitType = "LITER",
+            healthyCategory = "GREEN",
+        )
+
+        val assertions = SoftAssertions()
+        val firstResponse = webTestClient
+            .put()
+            .uri("/api/v1/products/${savedProduct.id}")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(firstUpdate)
+            .exchange()
+            .expectStatus().isOk
+            .expectBody<ProductResponse>()
+            .returnResult()
+            .responseBody
+
+        assertions.assertThat(firstResponse).isNotNull
+
+        firstResponse?.let {
+            assertions.assertThat(it.longName).isEqualTo("First Update")
+            assertions.assertThat(it.shortName).isEqualTo("First")
+            assertions.assertThat(it.healthyCategory).isEqualTo("GREEN")
+        }
+
+        // Second update
+        val secondUpdate = ProductRequest(
+            goldId = 55555L,
+            longName = "Second Update",
+            shortName = "Second",
+            iowUnitType = "EACH",
+            healthyCategory = "RED",
+        )
+
+        val secondResponse = webTestClient
+            .put()
+            .uri("/api/v1/products/${savedProduct.id}")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(secondUpdate)
+            .exchange()
+            .expectStatus().isOk
+            .expectBody<ProductResponse>()
+            .returnResult()
+            .responseBody
+
+        assertions.assertThat(secondResponse).isNotNull
+
+        secondResponse?.let {
+            assertions.assertThat(it.longName).isEqualTo("Second Update")
+            assertions.assertThat(it.shortName).isEqualTo("Second")
+            assertions.assertThat(it.iowUnitType).isEqualTo("EACH")
+            assertions.assertThat(it.healthyCategory).isEqualTo("RED")
+        }
+
+        // Verify final state by retrieving the product
+        val finalResponse = webTestClient
+            .get()
+            .uri("/api/v1/products/${savedProduct.id}")
+            .exchange()
+            .expectStatus().isOk
+            .expectBody<ProductResponse>()
+            .returnResult()
+            .responseBody
+
+        assertions.assertThat(finalResponse).isNotNull
+
+        finalResponse?.let {
+            assertions.assertThat(it.longName).isEqualTo("Second Update")
+            assertions.assertThat(it.shortName).isEqualTo("Second")
+            assertions.assertThat(it.iowUnitType).isEqualTo("EACH")
+            assertions.assertThat(it.healthyCategory).isEqualTo("RED")
+        }
+
+        assertions.assertAll()
     }
 }

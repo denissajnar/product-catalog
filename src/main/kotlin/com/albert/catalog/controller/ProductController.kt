@@ -12,6 +12,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse
 import io.swagger.v3.oas.annotations.responses.ApiResponses
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
+import org.springdoc.core.annotations.ParameterObject
 import org.springframework.data.domain.Pageable
 import org.springframework.data.domain.Sort
 import org.springframework.data.web.PageableDefault
@@ -48,7 +49,7 @@ class ProductController(
     )
     @GetMapping(produces = [MediaType.APPLICATION_JSON_VALUE])
     suspend fun getAllProducts(
-        @Parameter(description = "Pagination and sorting parameters")
+        @ParameterObject
         @PageableDefault(size = 20, sort = ["longName"], direction = Sort.Direction.ASC) pageable: Pageable,
     ): ResponseEntity<ProductPageResponse> =
         ResponseEntity.ok(productService.getPagedProducts(pageable))

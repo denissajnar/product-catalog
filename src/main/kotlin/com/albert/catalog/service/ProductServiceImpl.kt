@@ -19,7 +19,6 @@ import org.springframework.transaction.annotation.Transactional
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.nio.charset.StandardCharsets
-import java.time.LocalDateTime
 import java.util.*
 
 @Service
@@ -35,17 +34,11 @@ class ProductServiceImpl(
         productRepository.findById(id)?.toResponse()
 
     @Transactional
-    override suspend fun update(id: Long, productRequest: ProductRequest): ProductResponse? {
-        val existingProduct = productRepository.findById(id) ?: return null
-
-        val updatedProduct = productRequest.toEntity(existingProduct).copy(
-            updatedAt = LocalDateTime.now(),
-        )
-
-        val savedProduct = productRepository.save(updatedProduct)
-
-        return savedProduct.toResponse()
-    }
+    override suspend fun update(id: Long, productRequest: ProductRequest): ProductResponse? =
+        productRepository.findById(id)
+            ?.let { productRequest.toEntity(it) }
+            ?.let { productRepository.save(it) }
+            ?.toResponse()
 
     @Transactional
     override suspend fun delete(id: Long) =
@@ -125,8 +118,6 @@ class ProductServiceImpl(
             shortName = values[3],
             iowUnitType = values[4],
             healthyCategory = values[5],
-            createdAt = LocalDateTime.now(),
-            updatedAt = LocalDateTime.now(),
         )
     }
 

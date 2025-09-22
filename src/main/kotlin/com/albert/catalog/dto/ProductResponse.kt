@@ -8,6 +8,6 @@ data class ProductResponse(
     val shortName: String,
     val iowUnitType: String,
     val healthyCategory: String,
-    val createdAt: LocalDateTime,
-    val updatedAt: LocalDateTime,
+    val createdAt: LocalDateTime?,
+    val updatedAt: LocalDateTime?,
 )
