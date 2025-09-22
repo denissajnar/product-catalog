@@ -10,4 +10,5 @@ import org.springframework.stereotype.Repository
 interface ProductRepository : CoroutineCrudRepository<Product, Long> {
     fun findAllBy(pageable: Pageable): Flow<Product>
     fun findByGoldIdIn(goldIds: Collection<Long>): Flow<Product>
+    suspend fun existsByGoldId(goldId: Long): Boolean
 }

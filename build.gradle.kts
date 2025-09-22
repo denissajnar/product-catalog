@@ -35,7 +35,6 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springdoc:springdoc-openapi-starter-webflux-ui:2.8.13")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
-    implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-csv:2.20.0")
     implementation("io.projectreactor.kotlin:reactor-kotlin-extensions")
     implementation("org.flywaydb:flyway-database-postgresql")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
@@ -59,6 +58,7 @@ dependencies {
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.testcontainers:postgresql")
     testImplementation("org.testcontainers:r2dbc")
+    testImplementation("io.mockk:mockk:1.13.8")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

@@ -1,24 +1,26 @@
 package com.albert.catalog.service
 
-import com.albert.catalog.csv.JacksonCsvParser
-import com.albert.catalog.dto.*
+import com.albert.catalog.dto.ProductPageResponse
+import com.albert.catalog.dto.ProductRequest
+import com.albert.catalog.dto.ProductResponse
 import com.albert.catalog.entity.Product
 import com.albert.catalog.mapper.toEntity
 import com.albert.catalog.mapper.toResponse
 import com.albert.catalog.repository.ProductRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.reactive.asFlow
+import org.springframework.core.io.buffer.DataBuffer
 import org.springframework.data.domain.Pageable
 import org.springframework.http.codec.multipart.FilePart
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.nio.charset.StandardCharsets
+import java.util.*
 
 @Service
 class ProductServiceImpl(
     private val productRepository: ProductRepository,
-    private val csvParser: JacksonCsvParser,
 ) : ProductService {
 
     companion object {
@@ -90,213 +92,184 @@ class ProductServiceImpl(
         return response
     }
 
-    /**
-     * Imports products from a file provided as input. The method processes the file in batches,
-     * saving new products, updating existing ones, and counting any errors encountered during the process.
-     *
-     * @param file the CSV file containing product data to be imported
-     */
     @Transactional
     override suspend fun importProducts(file: FilePart) {
-        log.info { "Starting efficient product import with batch size: $DEFAULT_BATCH_SIZE" }
+        log.info { "Starting product import: ${file.filename()}" }
 
-        val importState = ImportState()
+        var imported = 0
+        var skipped = 0
+        val existingGoldIds = mutableSetOf<Long>()
 
-        csvParser.parseFileStreaming(file)
-            .collect { product ->
-                processProductForImport(product, importState)
-            }
-
-        processRemainingBatch(importState)
-        logImportCompletion(importState)
-    }
-
-    /**
-     * Processes a single product for import, handling batch processing when needed
-     */
-    private suspend fun processProductForImport(product: Product, state: ImportState) {
-        state.batch.add(product)
-
-        if (state.batch.size >= DEFAULT_BATCH_SIZE) {
-            processBatchAndUpdateState(state)
-        }
-    }
-
-    /**
-     * Processes current batch and updates import state
-     */
-    private suspend fun processBatchAndUpdateState(state: ImportState) {
-        val batchNumber = state.getBatchNumber()
-        log.info { "Processing batch $batchNumber with ${state.batch.size} products" }
-
-        processBatch(state.batch.toList())
-            .also { batchResult ->
-                state.totalProcessed += state.batch.size
-                state.updateCounts(batchResult)
-                state.batch.clear()
-                logBatchCompletion(batchNumber, batchResult)
-            }
-    }
-
-    /**
-     * Processes any remaining products in the final batch
-     */
-    private suspend fun processRemainingBatch(state: ImportState) {
-        state.batch.takeIf { it.isNotEmpty() }
-            ?.let {
-                val batchNumber = state.getBatchNumber()
-                log.info { "Processing final batch $batchNumber with ${state.batch.size} products" }
-
-                processBatch(state.batch.toList())
-                    .also { batchResult ->
-                        state.totalProcessed += state.batch.size
-                        state.updateCounts(batchResult)
-                        logBatchCompletion(batchNumber, batchResult, isFinal = true)
+        try {
+            // Parse CSV and process in batches for memory efficiency
+            file.content()
+                .asFlow()
+                .let { parseCsvLines(it) }
+                .buffer(DEFAULT_BATCH_SIZE)
+                .onEach { products ->
+                    // Filter out duplicates from current batch
+                    val candidateProducts = products.filter { product ->
+                        !existingGoldIds.contains(product.goldId)
                     }
-            }
-    }
 
-    /**
-     * Logs batch completion with results
-     */
-    private fun logBatchCompletion(batchNumber: Int, batchResult: BatchResult, isFinal: Boolean = false) {
-        val batchType = if (isFinal) "Final batch" else "Batch"
-        log.debug { "$batchType $batchNumber complete. Progress: saved=${batchResult.saved}, updated=${batchResult.updated}, errors=${batchResult.errors}" }
-    }
+                    if (candidateProducts.isEmpty()) {
+                        skipped += products.size
+                        return@onEach
+                    }
 
-    /**
-     * Logs import completion summary
-     */
-    private fun logImportCompletion(state: ImportState) {
-        log.info {
-            "Import completed: processed=${state.totalProcessed}, " +
-                    "saved=${state.savedCount}, updated=${state.updatedCount}, errors=${state.errorCount}"
-        }
-    }
+                    // Batch check for existing goldIds in database
+                    val goldIds = candidateProducts.map { it.goldId }
+                    val existingDbGoldIds = productRepository.findByGoldIdIn(goldIds)
+                        .map { it.goldId }
+                        .toList()
+                        .toSet()
 
-    /**
-     * Processes a batch of products by either inserting new records or updating existing ones
-     * based on their unique identifiers (goldId). Handles errors gracefully and provides
-     * detailed results of the processing in a batch result.
-     *
-     * @param products A list of products to be processed. Each product is either inserted (if new)
-     *                 or updated (if existing) based on its goldId.
-     * @return A BatchResult object containing the counts of successfully saved, updated, and failed products.
-     */
-    suspend fun processBatch(products: List<Product>): BatchResult =
-        runCatching {
-            val existingProducts = queryExistingProductsByGoldId(products)
-            val (updates, inserts) = partitionProductsForProcessing(products, existingProducts)
-
-            val savedCount = processProductInserts(inserts)
-            val updatedCount = processProductUpdates(updates, existingProducts)
-
-            BatchResult(savedCount, updatedCount, 0)
-        }.getOrElse { exception ->
-            log.error { "Batch processing failed completely: ${exception.message}" }
-            BatchResult(0, 0, products.size)
-        }
-
-    /**
-     * Queries existing products by their gold IDs using functional approach
-     */
-    private suspend fun queryExistingProductsByGoldId(products: List<Product>): Map<Long, Product> =
-        products.map { it.goldId }
-            .let { goldIds ->
-                productRepository.findByGoldIdIn(goldIds)
-                    .toList()
-                    .associateBy { product -> product.goldId }
-            }
-
-    /**
-     * Partitions products into updates and inserts based on existing products
-     */
-    private fun partitionProductsForProcessing(
-        products: List<Product>,
-        existingProducts: Map<Long, Product>,
-    ): Pair<List<Product>, List<Product>> =
-        products.partition { existingProducts.containsKey(it.goldId) }
-
-    /**
-     * Processes product inserts with batch operation and individual fallback
-     */
-    private suspend fun processProductInserts(inserts: List<Product>): Int =
-        inserts.takeIf { it.isNotEmpty() }
-            ?.let { products ->
-                runCatching {
-                    productRepository.saveAll(products).toList()
-                        .also { log.debug { "Batch inserted ${products.size} new products" } }
-                        .size
-                }.getOrElse { exception ->
-                    log.error { "Batch insert failed, processing individually: ${exception.message}" }
-                    processIndividualInserts(products)
-                }
-            } ?: 0
-
-    /**
-     * Processes inserts individually when batch operation fails
-     */
-    private suspend fun processIndividualInserts(products: List<Product>): Int =
-        products.fold(0) { savedCount, product ->
-            runCatching {
-                productRepository.save(product)
-                savedCount + 1
-            }.getOrElse { exception ->
-                log.error { "Failed to save product with goldId ${product.goldId}: ${exception.message}" }
-                savedCount
-            }
-        }
-
-    /**
-     * Processes product updates with batch operation and individual fallback
-     */
-    private suspend fun processProductUpdates(
-        updates: List<Product>,
-        existingProducts: Map<Long, Product>,
-    ): Int =
-        updates.takeIf { it.isNotEmpty() }
-            ?.let { products ->
-                buildUpdatedProducts(products, existingProducts)
-                    .takeIf { it.isNotEmpty() }
-                    ?.let { updatedProducts ->
-                        runCatching {
-                            productRepository.saveAll(updatedProducts).toList()
-                                .also { log.debug { "Batch updated ${updatedProducts.size} existing products" } }
-                                .size
-                        }.getOrElse { exception ->
-                            log.error { "Batch update failed, processing individually: ${exception.message}" }
-                            processIndividualUpdates(updatedProducts)
+                    // Filter out products that already exist in database
+                    val batch = candidateProducts.filter { product ->
+                        if (existingDbGoldIds.contains(product.goldId)) {
+                            skipped++
+                            false
+                        } else {
+                            existingGoldIds.add(product.goldId)
+                            imported++
+                            true
                         }
-                    } ?: 0
-            } ?: 0
+                    }
 
-    /**
-     * Builds updated product entities from new product data using functional approach
-     */
-    private fun buildUpdatedProducts(
-        updates: List<Product>,
-        existingProducts: Map<Long, Product>,
-    ): List<Product> =
-        updates.mapNotNull { newProduct ->
-            existingProducts[newProduct.goldId]?.copy(
-                longName = newProduct.longName,
-                shortName = newProduct.shortName,
-                iowUnitType = newProduct.iowUnitType,
-                healthyCategory = newProduct.healthyCategory,
-            )
+                    if (batch.isNotEmpty()) {
+                        productRepository.saveAll(batch).collect()
+                        log.debug { "Imported batch of ${batch.size} products, skipped ${products.size - batch.size}" }
+                    }
+                }
+                .onCompletion { exception ->
+                    if (exception != null) {
+                        log.error(exception) { "Error during product import" }
+                    } else {
+                        log.info { "Product import completed: imported=$imported, skipped=$skipped" }
+                    }
+                }
+                .collect()
+
+        } catch (e: Exception) {
+            log.error(e) { "Failed to import products from file: ${file.filename()}" }
+            throw e
         }
+    }
 
-    /**
-     * Processes updates individually when batch operation fails
-     */
-    private suspend fun processIndividualUpdates(products: List<Product>): Int =
-        products.fold(0) { updatedCount, product ->
-            runCatching {
-                productRepository.save(product)
-                updatedCount + 1
-            }.getOrElse { exception ->
-                log.error { "Failed to update product with goldId ${product.goldId}: ${exception.message}" }
-                updatedCount
+    private fun parseCsvLines(dataBufferFlow: Flow<DataBuffer>): Flow<List<Product>> = flow {
+        var headerParsed = false
+        var buffer = ""
+        val currentBatch = mutableListOf<Product>()
+
+        dataBufferFlow.collect { dataBuffer ->
+            val chunk = dataBuffer.toString(StandardCharsets.UTF_8)
+            buffer += chunk
+
+            val lines = buffer.split('\n')
+            buffer = lines.last() // Keep incomplete line in buffer
+
+            for (i in 0 until lines.size - 1) {
+                val line = lines[i].trim()
+                if (line.isEmpty()) continue
+
+                if (!headerParsed) {
+                    headerParsed = true
+                    continue // Skip header row
+                }
+
+                try {
+                    val product = parseCsvLine(line)
+                    currentBatch.add(product)
+
+                    if (currentBatch.size >= DEFAULT_BATCH_SIZE) {
+                        emit(currentBatch.toList())
+                        currentBatch.clear()
+                    }
+                } catch (e: Exception) {
+                    log.warn(e) { "Failed to parse CSV line: $line" }
+                }
             }
         }
+
+        // Process remaining buffer if any
+        if (buffer.trim().isNotEmpty() && headerParsed) {
+            try {
+                val product = parseCsvLine(buffer.trim())
+                currentBatch.add(product)
+            } catch (e: Exception) {
+                log.warn(e) { "Failed to parse final CSV line: $buffer" }
+            }
+        }
+
+        // Emit remaining products
+        if (currentBatch.isNotEmpty()) {
+            emit(currentBatch.toList())
+        }
+    }
+
+    private fun parseCsvLine(line: String): Product {
+        val fields = parseCsvFields(line)
+        require(fields.size == 6) { "Expected 6 fields, got ${fields.size}" }
+
+        return Product(
+            uuid = UUID.fromString(fields[0]),
+            goldId = fields[1].toLong(),
+            longName = fields[2],
+            shortName = fields[3],
+            iowUnitType = fields[4],
+            healthyCategory = fields[5],
+        )
+    }
+    
+    /**
+     * Parses a single line of CSV-formatted text into a list of fields, handling quoted fields
+     * and escaped quotes within those fields.
+     *
+     * @param line the CSV line to be parsed as a string
+     * @return a list of strings representing the parsed fields of the line
+     */
+    private fun parseCsvFields(line: String): List<String> {
+        val fields = mutableListOf<String>()
+        var current = StringBuilder()
+        var inQuotes = false
+        var i = 0
+
+        while (i < line.length) {
+            val char = line[i]
+            when {
+                char == '"' && !inQuotes && (i == 0 || line[i - 1] == ',') -> {
+                    // Start of quoted field
+                    inQuotes = true
+                }
+
+                char == '"' && inQuotes && i + 1 < line.length && line[i + 1] == '"' -> {
+                    // Escaped quote within quoted field
+                    current.append('"')
+                    i++ // Skip the next quote
+                }
+
+                char == '"' && inQuotes && (i == line.length - 1 || line[i + 1] == ',') -> {
+                    // End of quoted field
+                    inQuotes = false
+                }
+
+                char == ',' && !inQuotes -> {
+                    // Field separator
+                    fields.add(current.toString())
+                    current = StringBuilder()
+                }
+
+                else -> {
+                    // Regular character or quoted character
+                    if (!(char == '"' && !inQuotes && (i == 0 || line[i - 1] == ','))) {
+                        current.append(char)
+                    }
+                }
+            }
+            i++
+        }
+
+        fields.add(current.toString())
+        return fields
+    }
 }
