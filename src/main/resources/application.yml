@@ -7,6 +7,11 @@ spring:
     username: catalog_user
     password: catalog_password
 
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
   webflux:
     multipart:
       max-in-memory-size: 10MB
