@@ -1,10 +1,7 @@
 package com.albert.catalog.service
 
 import com.albert.catalog.csv.JacksonCsvParser
-import com.albert.catalog.dto.BatchResult
-import com.albert.catalog.dto.ProductPageResponse
-import com.albert.catalog.dto.ProductRequest
-import com.albert.catalog.dto.ProductResponse
+import com.albert.catalog.dto.*
 import com.albert.catalog.entity.Product
 import com.albert.catalog.mapper.toEntity
 import com.albert.catalog.mapper.toResponse
@@ -103,50 +100,77 @@ class ProductServiceImpl(
     override suspend fun importProducts(file: FilePart) {
         log.info { "Starting efficient product import with batch size: $DEFAULT_BATCH_SIZE" }
 
-        var totalProcessed = 0
-        var savedCount = 0
-        var updatedCount = 0
-        var errorCount = 0
-        val batch = mutableListOf<Product>()
+        val importState = ImportState()
 
         csvParser.parseFileStreaming(file)
             .collect { product ->
-                batch.add(product)
-
-                if (batch.size >= DEFAULT_BATCH_SIZE) {
-                    val batchNumber = (totalProcessed / DEFAULT_BATCH_SIZE) + 1
-                    log.info { "Processing batch $batchNumber with ${batch.size} products" }
-
-                    val batchResult = processBatch(batch.toList())
-
-                    totalProcessed += batch.size
-                    savedCount += batchResult.saved
-                    updatedCount += batchResult.updated
-                    errorCount += batchResult.errors
-
-                    batch.clear()
-                    log.debug { "Batch $batchNumber complete. Progress: saved=${batchResult.saved}, updated=${batchResult.updated}, errors=${batchResult.errors}" }
-                }
+                processProductForImport(product, importState)
             }
 
-        // Process remaining products in the batch
-        if (batch.isNotEmpty()) {
-            val batchNumber = (totalProcessed / DEFAULT_BATCH_SIZE) + 1
-            log.info { "Processing final batch $batchNumber with ${batch.size} products" }
+        processRemainingBatch(importState)
+        logImportCompletion(importState)
+    }
 
-            val batchResult = processBatch(batch.toList())
+    /**
+     * Processes a single product for import, handling batch processing when needed
+     */
+    private suspend fun processProductForImport(product: Product, state: ImportState) {
+        state.batch.add(product)
 
-            totalProcessed += batch.size
-            savedCount += batchResult.saved
-            updatedCount += batchResult.updated
-            errorCount += batchResult.errors
-
-            log.debug { "Final batch $batchNumber complete. Progress: saved=${batchResult.saved}, updated=${batchResult.updated}, errors=${batchResult.errors}" }
+        if (state.batch.size >= DEFAULT_BATCH_SIZE) {
+            processBatchAndUpdateState(state)
         }
+    }
 
+    /**
+     * Processes current batch and updates import state
+     */
+    private suspend fun processBatchAndUpdateState(state: ImportState) {
+        val batchNumber = state.getBatchNumber()
+        log.info { "Processing batch $batchNumber with ${state.batch.size} products" }
+
+        processBatch(state.batch.toList())
+            .also { batchResult ->
+                state.totalProcessed += state.batch.size
+                state.updateCounts(batchResult)
+                state.batch.clear()
+                logBatchCompletion(batchNumber, batchResult)
+            }
+    }
+
+    /**
+     * Processes any remaining products in the final batch
+     */
+    private suspend fun processRemainingBatch(state: ImportState) {
+        state.batch.takeIf { it.isNotEmpty() }
+            ?.let {
+                val batchNumber = state.getBatchNumber()
+                log.info { "Processing final batch $batchNumber with ${state.batch.size} products" }
+
+                processBatch(state.batch.toList())
+                    .also { batchResult ->
+                        state.totalProcessed += state.batch.size
+                        state.updateCounts(batchResult)
+                        logBatchCompletion(batchNumber, batchResult, isFinal = true)
+                    }
+            }
+    }
+
+    /**
+     * Logs batch completion with results
+     */
+    private fun logBatchCompletion(batchNumber: Int, batchResult: BatchResult, isFinal: Boolean = false) {
+        val batchType = if (isFinal) "Final batch" else "Batch"
+        log.debug { "$batchType $batchNumber complete. Progress: saved=${batchResult.saved}, updated=${batchResult.updated}, errors=${batchResult.errors}" }
+    }
+
+    /**
+     * Logs import completion summary
+     */
+    private fun logImportCompletion(state: ImportState) {
         log.info {
-            "Import completed: processed=$totalProcessed, " +
-                    "saved=$savedCount, updated=$updatedCount, errors=$errorCount"
+            "Import completed: processed=${state.totalProcessed}, " +
+                    "saved=${state.savedCount}, updated=${state.updatedCount}, errors=${state.errorCount}"
         }
     }
 
@@ -159,81 +183,120 @@ class ProductServiceImpl(
      *                 or updated (if existing) based on its goldId.
      * @return A BatchResult object containing the counts of successfully saved, updated, and failed products.
      */
-    @Transactional
-    suspend fun processBatch(products: List<Product>): BatchResult {
-        var saved = 0
-        var updated = 0
-        var errors = 0
+    suspend fun processBatch(products: List<Product>): BatchResult =
+        runCatching {
+            val existingProducts = queryExistingProductsByGoldId(products)
+            val (updates, inserts) = partitionProductsForProcessing(products, existingProducts)
 
-        try {
-            // Step 1: Bulk query existing products by goldId
-            val goldIds = products.map { it.goldId }
-            val existingProducts =
-                productRepository.findByGoldIdIn(goldIds)
-                    .toList()
-                    .associateBy { it.goldId }
+            val savedCount = processProductInserts(inserts)
+            val updatedCount = processProductUpdates(updates, existingProducts)
 
-            // Step 2: Separate new products from updates
-            val (updates, inserts) = products.partition { existingProducts.containsKey(it.goldId) }
-
-            // Step 3: Process inserts in batch
-            if (inserts.isNotEmpty()) {
-                try {
-                    productRepository.saveAll(inserts).toList()
-                    saved += inserts.size
-                    log.debug { "Batch inserted ${inserts.size} new products" }
-                } catch (e: Exception) {
-                    log.error { "Batch insert failed, processing individually: ${e.message}" }
-                    // Fallback: process inserts individually
-                    inserts.forEach { product ->
-                        try {
-                            productRepository.save(product)
-                            saved++
-                        } catch (ex: Exception) {
-                            errors++
-                            log.error { "Failed to save product with goldId ${product.goldId}: ${ex.message}" }
-                        }
-                    }
-                }
-            }
-
-            // Step 4: Process updates in batch
-            if (updates.isNotEmpty()) {
-                val updatedProducts = updates.mapNotNull { newProduct ->
-                    existingProducts[newProduct.goldId]?.copy(
-                        longName = newProduct.longName,
-                        shortName = newProduct.shortName,
-                        iowUnitType = newProduct.iowUnitType,
-                        healthyCategory = newProduct.healthyCategory,
-                    )
-                }
-
-                try {
-                    if (updatedProducts.isNotEmpty()) {
-                        productRepository.saveAll(updatedProducts).toList()
-                        updated += updatedProducts.size
-                        log.debug { "Batch updated ${updatedProducts.size} existing products" }
-                    }
-                } catch (e: Exception) {
-                    log.error { "Batch update failed, processing individually: ${e.message}" }
-                    // Fallback: process updates individually
-                    updatedProducts.forEach { product ->
-                        try {
-                            productRepository.save(product)
-                            updated++
-                        } catch (ex: Exception) {
-                            errors++
-                            log.error { "Failed to update product with goldId ${product.goldId}: ${ex.message}" }
-                        }
-                    }
-                }
-            }
-
-        } catch (e: Exception) {
-            log.error { "Batch processing failed completely: ${e.message}" }
-            errors += products.size
+            BatchResult(savedCount, updatedCount, 0)
+        }.getOrElse { exception ->
+            log.error { "Batch processing failed completely: ${exception.message}" }
+            BatchResult(0, 0, products.size)
         }
 
-        return BatchResult(saved, updated, errors)
-    }
+    /**
+     * Queries existing products by their gold IDs using functional approach
+     */
+    private suspend fun queryExistingProductsByGoldId(products: List<Product>): Map<Long, Product> =
+        products.map { it.goldId }
+            .let { goldIds ->
+                productRepository.findByGoldIdIn(goldIds)
+                    .toList()
+                    .associateBy { product -> product.goldId }
+            }
+
+    /**
+     * Partitions products into updates and inserts based on existing products
+     */
+    private fun partitionProductsForProcessing(
+        products: List<Product>,
+        existingProducts: Map<Long, Product>,
+    ): Pair<List<Product>, List<Product>> =
+        products.partition { existingProducts.containsKey(it.goldId) }
+
+    /**
+     * Processes product inserts with batch operation and individual fallback
+     */
+    private suspend fun processProductInserts(inserts: List<Product>): Int =
+        inserts.takeIf { it.isNotEmpty() }
+            ?.let { products ->
+                runCatching {
+                    productRepository.saveAll(products).toList()
+                        .also { log.debug { "Batch inserted ${products.size} new products" } }
+                        .size
+                }.getOrElse { exception ->
+                    log.error { "Batch insert failed, processing individually: ${exception.message}" }
+                    processIndividualInserts(products)
+                }
+            } ?: 0
+
+    /**
+     * Processes inserts individually when batch operation fails
+     */
+    private suspend fun processIndividualInserts(products: List<Product>): Int =
+        products.fold(0) { savedCount, product ->
+            runCatching {
+                productRepository.save(product)
+                savedCount + 1
+            }.getOrElse { exception ->
+                log.error { "Failed to save product with goldId ${product.goldId}: ${exception.message}" }
+                savedCount
+            }
+        }
+
+    /**
+     * Processes product updates with batch operation and individual fallback
+     */
+    private suspend fun processProductUpdates(
+        updates: List<Product>,
+        existingProducts: Map<Long, Product>,
+    ): Int =
+        updates.takeIf { it.isNotEmpty() }
+            ?.let { products ->
+                buildUpdatedProducts(products, existingProducts)
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { updatedProducts ->
+                        runCatching {
+                            productRepository.saveAll(updatedProducts).toList()
+                                .also { log.debug { "Batch updated ${updatedProducts.size} existing products" } }
+                                .size
+                        }.getOrElse { exception ->
+                            log.error { "Batch update failed, processing individually: ${exception.message}" }
+                            processIndividualUpdates(updatedProducts)
+                        }
+                    } ?: 0
+            } ?: 0
+
+    /**
+     * Builds updated product entities from new product data using functional approach
+     */
+    private fun buildUpdatedProducts(
+        updates: List<Product>,
+        existingProducts: Map<Long, Product>,
+    ): List<Product> =
+        updates.mapNotNull { newProduct ->
+            existingProducts[newProduct.goldId]?.copy(
+                longName = newProduct.longName,
+                shortName = newProduct.shortName,
+                iowUnitType = newProduct.iowUnitType,
+                healthyCategory = newProduct.healthyCategory,
+            )
+        }
+
+    /**
+     * Processes updates individually when batch operation fails
+     */
+    private suspend fun processIndividualUpdates(products: List<Product>): Int =
+        products.fold(0) { updatedCount, product ->
+            runCatching {
+                productRepository.save(product)
+                updatedCount + 1
+            }.getOrElse { exception ->
+                log.error { "Failed to update product with goldId ${product.goldId}: ${exception.message}" }
+                updatedCount
+            }
+        }
 }

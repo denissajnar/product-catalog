@@ -61,77 +61,132 @@ class JacksonCsvParser {
      *             content of the CSV file.
      * @return a flow of `Product` entities parsed from the CSV file.
      */
-    fun parseFileStreaming(file: FilePart): Flow<Product> =
-        flow {
-            log.info { "Starting efficient streaming CSV parse for: ${file.filename()}" }
+    fun parseFileStreaming(file: FilePart): Flow<Product> = flow {
+        log.info { "Starting efficient streaming CSV parse for: ${file.filename()}" }
 
-            val contentBuffer = StringBuilder()
-            var productCount = 0
-            var isHeaderProcessed = false
+        val streamingState = StreamingParseState()
 
-            file.content()
-                .asFlow()
-                .collect { dataBuffer ->
-                    val chunk = extractChunkContent(dataBuffer)
-                    contentBuffer.append(chunk)
-
-                    // Process complete lines from buffer
-                    val completeContent = extractCompleteLines(contentBuffer)
-
-                    if (completeContent.isNotEmpty()) {
-                        // Parse batch of records from complete content
-                        parseRecordsBatch(completeContent, isHeaderProcessed).collect { product ->
-                            emit(product)
-                            productCount++
-                        }
-                        isHeaderProcessed = true
-                    }
-                }
-
-            // Process any remaining content in buffer
-            val remainingContent = contentBuffer.toString().trim()
-            if (remainingContent.isNotEmpty() && isHeaderProcessed) {
-                // Add header for remaining data lines
-                val headerContent =
-                    "uuid,gold_id,long_name,short_name,iow_unit_type,healthy_category\n$remainingContent"
-
-                parseRecordsBatch(headerContent, true).collect { product ->
+        file.content()
+            .asFlow()
+            .collect { dataBuffer ->
+                processDataChunk(dataBuffer, streamingState) { product ->
                     emit(product)
-                    productCount++
+                    streamingState.incrementProductCount()
                 }
             }
 
-            log.info { "Streaming parse completed. Parsed $productCount products" }
-        }.flowOn(Dispatchers.IO)
+        processRemainingContent(streamingState) { product ->
+            emit(product)
+            streamingState.incrementProductCount()
+        }
+
+        log.info { "Streaming parse completed. Parsed ${streamingState.productCount} products" }
+    }.flowOn(Dispatchers.IO)
+
+    /**
+     * Represents the state during streaming CSV parsing
+     */
+    private data class StreamingParseState(
+        val contentBuffer: StringBuilder = StringBuilder(),
+        var productCount: Int = 0,
+        var isHeaderProcessed: Boolean = false,
+    ) {
+        fun incrementProductCount() = productCount++
+    }
+
+    /**
+     * Processes a single data chunk from the streaming content
+     */
+    private suspend fun processDataChunk(
+        dataBuffer: DataBuffer,
+        state: StreamingParseState,
+        emitProduct: suspend (Product) -> Unit,
+    ) {
+        val chunk = extractChunkContent(dataBuffer)
+        state.contentBuffer.append(chunk)
+
+        extractCompleteLines(state.contentBuffer)
+            .takeIf { it.isNotEmpty() }
+            ?.let { completeContent ->
+                parseRecordsBatch(completeContent, state.isHeaderProcessed)
+                    .collect { product -> emitProduct(product) }
+                state.isHeaderProcessed = true
+            }
+    }
+
+    /**
+     * Processes any remaining content in the buffer after streaming is complete
+     */
+    private suspend fun processRemainingContent(
+        state: StreamingParseState,
+        emitProduct: suspend (Product) -> Unit,
+    ) {
+        state.contentBuffer.toString()
+            .trim()
+            .takeIf { it.isNotEmpty() && state.isHeaderProcessed }
+            ?.let { remainingContent ->
+                buildCsvWithHeader(remainingContent)
+                    .let { headerContent ->
+                        parseRecordsBatch(headerContent, skipHeader = true)
+                            .collect { product -> emitProduct(product) }
+                    }
+            }
+    }
+
+    /**
+     * Builds CSV content with header for remaining data
+     */
+    private fun buildCsvWithHeader(remainingContent: String): String =
+        "uuid,gold_id,long_name,short_name,iow_unit_type,healthy_category\n$remainingContent"
 
     /**
      * Extract complete lines from buffer, keeping incomplete line for next chunk
      */
-    private fun extractCompleteLines(buffer: StringBuilder): String {
-        val content = buffer.toString()
-        val lines = content.lines()
-
-        // If content doesn't end with newline, last line is incomplete
-        val completeLines = if (content.endsWith("\n") || content.endsWith("\r\n")) {
-            lines
-        } else {
-            // Keep incomplete line in buffer for next chunk
-            val incompleteLine = lines.lastOrNull() ?: ""
-            buffer.clear()
-            buffer.append(incompleteLine)
-            lines.dropLast(1)
+    private fun extractCompleteLines(buffer: StringBuilder): String =
+        buffer.toString().let { content ->
+            content.lines().let { lines ->
+                processCompleteLines(content, lines, buffer)
+            }
         }
 
-        // Return complete lines as CSV content
-        return if (completeLines.isNotEmpty()) {
-            if (!content.endsWith("\n") && !content.endsWith("\r\n")) {
-                buffer.clear() // Clear buffer since we're processing complete lines
+    /**
+     * Processes complete lines and manages buffer state
+     */
+    private fun processCompleteLines(content: String, lines: List<String>, buffer: StringBuilder): String =
+        when {
+            content.endsWithNewline() -> lines
+            else -> handleIncompleteLines(lines, buffer)
+        }.let { completeLines ->
+            completeLines.takeIf { it.isNotEmpty() }
+                ?.also { manageBufferState(content, buffer) }
+                ?.joinToString("\n")
+                ?: ""
+        }
+
+    /**
+     * Handles lines when content doesn't end with newline
+     */
+    private fun handleIncompleteLines(lines: List<String>, buffer: StringBuilder): List<String> =
+        lines.lastOrNull()
+            ?.also { incompleteLine ->
+                buffer.clear()
+                buffer.append(incompleteLine)
             }
-            completeLines.joinToString("\n")
-        } else {
-            ""
+            .let { lines.dropLast(1) }
+
+    /**
+     * Manages buffer clearing based on content state
+     */
+    private fun manageBufferState(content: String, buffer: StringBuilder) {
+        if (!content.endsWithNewline()) {
+            buffer.clear()
         }
     }
+
+    /**
+     * Extension function to check if string ends with newline
+     */
+    private fun String.endsWithNewline(): Boolean = endsWith("\n") || endsWith("\r\n")
 
     /**
      * Parses a batch of CSV content and emits `Product` entities as a flow.
@@ -144,37 +199,67 @@ class JacksonCsvParser {
      *                   Useful if headers were already processed in previous batches.
      * @return a flow of `Product` entities parsed from the given CSV content.
      */
-    private fun parseRecordsBatch(csvContent: String, skipHeader: Boolean): Flow<Product> =
-        flow {
-            if (csvContent.isBlank()) return@flow
-
-            try {
-                StringReader(csvContent).use { reader ->
-                    val iterator: MappingIterator<Product> = csvMapper
-                        .readerFor(Product::class.java)
-                        .with(csvSchema)
-                        .readValues(reader)
-
-                    // Skip header if already processed
-                    if (skipHeader && iterator.hasNext()) {
-                        iterator.next() // Skip header record
-                    }
-
-                    // Process all records in this batch
-                    while (iterator.hasNext()) {
-                        try {
-                            val product = iterator.next()
-                            emit(product)
-                        } catch (e: Exception) {
-                            log.warn { "Failed to parse CSV record: ${e.message}" }
-                            // Continue processing other records
-                        }
-                    }
+    private fun parseRecordsBatch(csvContent: String, skipHeader: Boolean): Flow<Product> = flow {
+        csvContent.takeUnless { it.isBlank() }
+            ?.let { content ->
+                parseCsvContent(content, skipHeader) { product ->
+                    emit(product)
                 }
-            } catch (e: Exception) {
-                log.error { "Failed to parse CSV batch: ${e.message}" }
             }
+    }
+
+    /**
+     * Parses CSV content and processes products with the given emit function
+     */
+    private suspend fun parseCsvContent(
+        csvContent: String,
+        skipHeader: Boolean,
+        emitProduct: suspend (Product) -> Unit,
+    ) {
+        runCatching {
+            StringReader(csvContent).use { reader ->
+                createCsvIterator(reader)
+                    .also { iterator -> skipHeaderIfNeeded(iterator, skipHeader) }
+                    .let { iterator -> processAllRecords(iterator, emitProduct) }
+            }
+        }.onFailure { exception ->
+            log.error { "Failed to parse CSV batch: ${exception.message}" }
         }
+    }
+
+    /**
+     * Creates CSV mapping iterator for Product parsing
+     */
+    private fun createCsvIterator(reader: StringReader): MappingIterator<Product> =
+        csvMapper
+            .readerFor(Product::class.java)
+            .with(csvSchema)
+            .readValues(reader)
+
+    /**
+     * Skips header if needed and iterator has content
+     */
+    private fun skipHeaderIfNeeded(iterator: MappingIterator<Product>, skipHeader: Boolean) {
+        if (skipHeader && iterator.hasNext()) {
+            iterator.next()
+        }
+    }
+
+    /**
+     * Processes all records from iterator, handling individual record errors
+     */
+    private suspend fun processAllRecords(
+        iterator: MappingIterator<Product>,
+        emitProduct: suspend (Product) -> Unit,
+    ) {
+        while (iterator.hasNext()) {
+            runCatching { iterator.next() }
+                .onSuccess { product -> emitProduct(product) }
+                .onFailure { exception ->
+                    log.warn { "Failed to parse CSV record: ${exception.message}" }
+                }
+        }
+    }
 
     /**
      * Extract content from DataBuffer and release it
