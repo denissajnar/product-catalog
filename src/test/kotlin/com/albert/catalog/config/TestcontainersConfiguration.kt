@@ -13,7 +13,7 @@ class TestcontainersConfiguration {
     @Bean
     @ServiceConnection
     fun postgresContainer(): PostgreSQLContainer<*> =
-        PostgreSQLContainer(DockerImageName.parse("postgres:postgres:15-alpine"))
+        PostgreSQLContainer(DockerImageName.parse("postgres:15-alpine"))
 
     @Bean
     @ServiceConnection("redis")

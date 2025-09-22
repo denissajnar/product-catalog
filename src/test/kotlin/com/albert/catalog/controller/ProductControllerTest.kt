@@ -11,10 +11,12 @@ import org.junit.jupiter.api.Test
 import org.springframework.core.io.ClassPathResource
 import org.springframework.http.MediaType
 import org.springframework.http.client.MultipartBodyBuilder
+import org.springframework.security.test.context.support.WithMockUser
 import org.springframework.test.web.reactive.server.expectBody
 import org.springframework.web.reactive.function.BodyInserters
 import java.time.Duration
 
+@WithMockUser(username = "admin", roles = ["ADMIN"])
 class ProductControllerTest : SpringBootTestParent() {
 
     @Test

@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: product-catalog-service-test
+
+  data:
+    redis:
+      repositories:
+        enabled: false
+  cache:
+    type: simple
+
+logging:
+  level:
+    com.albert.catalog: DEBUG
+    org.springframework.security: DEBUG
+    org.springframework.web: DEBUG
+    org.springframework.test: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+    access:
+      default: none
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
