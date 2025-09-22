@@ -18,5 +18,39 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: catalog-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    container_name: catalog-app
+    environment:
+      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/catalog
+      SPRING_R2DBC_USERNAME: catalog_user
+      SPRING_R2DBC_PASSWORD: catalog_password
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: 6379
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/actuator/health" ]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
 volumes:
   postgres_data:

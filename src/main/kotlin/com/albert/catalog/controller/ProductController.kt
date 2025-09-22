@@ -20,6 +20,7 @@ import org.springframework.data.web.PageableDefault
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.http.codec.multipart.FilePart
+import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.validation.annotation.Validated
 import org.springframework.web.bind.annotation.*
 
@@ -51,6 +52,7 @@ class ProductController(
             ),
         ],
     )
+    @PreAuthorize("hasRole('ADMIN')")
     @GetMapping(produces = [MediaType.APPLICATION_JSON_VALUE])
     suspend fun getAllProducts(
         @ParameterObject
@@ -80,6 +82,7 @@ class ProductController(
             ApiResponse(responseCode = "404", description = "Product not found", content = [Content()]),
         ],
     )
+    @PreAuthorize("hasRole('ADMIN')")
     @GetMapping("/{id}", produces = [MediaType.APPLICATION_JSON_VALUE])
     suspend fun getProductByid(
         @Parameter(description = "Product id", required = true) @PathVariable id: Long,
@@ -115,6 +118,7 @@ class ProductController(
             ApiResponse(responseCode = "404", description = "Product not found", content = [Content()]),
         ],
     )
+    @PreAuthorize("hasRole('ADMIN')")
     @PutMapping("/{id}", produces = [MediaType.APPLICATION_JSON_VALUE])
     suspend fun updateProduct(
         @Parameter(description = "Product id", required = true) @PathVariable id: Long,
@@ -145,6 +149,7 @@ class ProductController(
             ApiResponse(responseCode = "404", description = "Product not found", content = [Content()]),
         ],
     )
+    @PreAuthorize("hasRole('ADMIN')")
     @DeleteMapping("/{id}")
     suspend fun deleteProduct(
         @Parameter(description = "Product id", required = true) @PathVariable id: Long,
@@ -172,6 +177,7 @@ class ProductController(
             ApiResponse(responseCode = "400", description = "Invalid file format or content", content = [Content()]),
         ],
     )
+    @PreAuthorize("hasRole('ADMIN')")
     @PostMapping("/import", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
     suspend fun importProducts(
         @Parameter(description = "CSV file containing products to import", required = true)

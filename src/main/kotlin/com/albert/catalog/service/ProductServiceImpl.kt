@@ -11,6 +11,8 @@ import com.albert.catalog.repository.ProductRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.reactive.asFlow
+import org.springframework.cache.annotation.CacheEvict
+import org.springframework.cache.annotation.Cacheable
 import org.springframework.core.io.buffer.DataBuffer
 import org.springframework.data.domain.Pageable
 import org.springframework.http.codec.multipart.FilePart
@@ -119,12 +121,14 @@ class ProductServiceImpl(
         productRepository.findAllBy(pageable)
             .map { it.toResponse() }
 
+    @Cacheable(value = ["products"], key = "#id")
     override suspend fun findById(id: Long): ProductResponse? {
         log.debug { "Finding product by id: $id" }
         return productRepository.findById(id)?.toResponse()
     }
 
     @Transactional
+    @CacheEvict(value = ["products"], key = "#id")
     override suspend fun update(id: Long, productRequest: ProductRequest): ProductResponse? {
         log.debug { "Updating product with id: $id" }
         return productRepository.findById(id)
@@ -137,6 +141,7 @@ class ProductServiceImpl(
     }
 
     @Transactional
+    @CacheEvict(value = ["products"], key = "#id")
     override suspend fun delete(id: Long): Boolean {
         log.debug { "Attempting to delete product with id: $id" }
         return if (productRepository.existsById(id)) {
