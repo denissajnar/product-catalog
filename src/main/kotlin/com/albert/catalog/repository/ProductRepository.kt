@@ -10,6 +10,4 @@ import org.springframework.stereotype.Repository
 interface ProductRepository : JpaRepository<Product, Long> {
     fun findAllBy(pageable: Pageable): Page<Product>
     fun findByGoldIdIn(goldIds: Collection<Long>): List<Product>
-
-    fun existsByGoldId(goldId: Long): Boolean
 }
