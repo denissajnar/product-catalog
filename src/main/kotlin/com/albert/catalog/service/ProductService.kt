@@ -1,23 +1,22 @@
 package com.albert.catalog.service
 
-import com.albert.catalog.dto.ProductPageResponse
 import com.albert.catalog.dto.ProductRequest
 import com.albert.catalog.dto.ProductResponse
-import kotlinx.coroutines.flow.Flow
+import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
-import org.springframework.http.codec.multipart.FilePart
+import org.springframework.web.multipart.MultipartFile
 
 interface ProductService {
 
-    fun findAll(pageable: Pageable): Flow<ProductResponse>
+    fun findAll(pageable: Pageable): List<ProductResponse>
 
-    suspend fun findById(id: Long): ProductResponse?
+    fun findById(id: Long): ProductResponse?
 
-    suspend fun update(id: Long, productRequest: ProductRequest): ProductResponse?
+    fun update(id: Long, productRequest: ProductRequest): ProductResponse?
 
-    suspend fun delete(id: Long): Boolean
+    fun delete(id: Long): Boolean
 
-    suspend fun getPagedProducts(pageable: Pageable): ProductPageResponse
+    fun getPagedProducts(pageable: Pageable): Page<ProductResponse>
 
-    suspend fun importProducts(file: FilePart)
+    fun importProducts(file: MultipartFile)
 }

@@ -1,7 +1,6 @@
 package com.albert.catalog.service
 
 import com.albert.catalog.dto.ImportStats
-import com.albert.catalog.dto.ProductPageResponse
 import com.albert.catalog.dto.ProductRequest
 import com.albert.catalog.dto.ProductResponse
 import com.albert.catalog.entity.Product
@@ -9,15 +8,15 @@ import com.albert.catalog.mapper.toEntity
 import com.albert.catalog.mapper.toResponse
 import com.albert.catalog.repository.ProductRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.reactive.asFlow
 import org.springframework.cache.annotation.CacheEvict
 import org.springframework.cache.annotation.Cacheable
-import org.springframework.core.io.buffer.DataBuffer
+import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
-import org.springframework.http.codec.multipart.FilePart
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.web.multipart.MultipartFile
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.nio.charset.StandardCharsets
 import java.util.*
 
@@ -29,16 +28,100 @@ class ProductServiceImpl(
     companion object {
         private val log = KotlinLogging.logger {}
         const val DEFAULT_BATCH_SIZE = 1000
-        const val FIRST_PAGE_INDEX = 0
-        const val PAGE_CALCULATION_OFFSET = 1
+    }
+
+    override fun findAll(pageable: Pageable): List<ProductResponse> =
+        productRepository.findAllBy(pageable).content.map { it.toResponse() }
+
+    @Cacheable(value = ["products"], key = "#id")
+    override fun findById(id: Long): ProductResponse? {
+        log.debug { "Finding product by id: $id" }
+        return productRepository.findById(id).orElse(null)?.toResponse()
+    }
+
+    @Transactional
+    @CacheEvict(value = ["products"], key = "#id")
+    override fun update(id: Long, productRequest: ProductRequest): ProductResponse? {
+        log.debug { "Updating product with id: $id" }
+        return productRepository.findById(id)
+            .map { existingProduct ->
+                log.debug { "Product found for update, proceeding with update for id: $id" }
+                productRequest.toEntity(existingProduct)
+            }
+            .map { productRepository.save(it) }
+            .map { it.toResponse() }
+            .orElse(null)
+    }
+
+    @Transactional
+    @CacheEvict(value = ["products"], key = "#id")
+    override fun delete(id: Long): Boolean {
+        log.debug { "Attempting to delete product with id: $id" }
+        return if (productRepository.existsById(id)) {
+            productRepository.deleteById(id)
+            log.debug { "Product deleted successfully with id: $id" }
+            true
+        } else {
+            log.debug { "Product not found for deletion with id: $id" }
+            false
+        }
+    }
+
+    @Transactional(readOnly = true)
+    override fun getPagedProducts(pageable: Pageable): Page<ProductResponse> {
+        log.debug { "Retrieving paged products: page=${pageable.pageNumber}, size=${pageable.pageSize}" }
+        val page = productRepository.findAllBy(pageable)
+        val responsePage = page.map { it.toResponse() }
+
+        log.debug { "Paged products retrieved: ${responsePage.content.size} items on page ${pageable.pageNumber} of ${page.totalPages} total pages" }
+        return responsePage
+    }
+
+    @Transactional
+    override fun importProducts(file: MultipartFile) {
+        log.info { "Starting product import: ${file.originalFilename}" }
+        val stats = ImportStats()
+
+        try {
+            BufferedReader(InputStreamReader(file.inputStream, StandardCharsets.UTF_8)).use { reader ->
+                val lines = reader.readLines()
+                if (lines.isEmpty()) {
+                    log.warn { "File is empty: ${file.originalFilename}" }
+                    return
+                }
+
+                // Skip header line and process data
+                val dataLines = lines.drop(1)
+                val products = mutableListOf<Product>()
+
+                for ((index, line) in dataLines.withIndex()) {
+                    try {
+                        if (line.isNotBlank()) {
+                            val product = parseCsvLine(line)
+                            products.add(product)
+
+                            // Process in batches
+                            if (products.size >= DEFAULT_BATCH_SIZE || index == dataLines.size - 1) {
+                                processProductBatch(products, stats)
+                                products.clear()
+                            }
+                        }
+                    } catch (ex: Exception) {
+                        log.error(ex) { "Error parsing line ${index + 2}: $line" }
+                        stats.incrementSkipped()
+                    }
+                }
+            }
+
+            log.info { "Product import completed: ${file.originalFilename}, imported: ${stats.imported}, skipped: ${stats.skipped}" }
+        } catch (ex: Exception) {
+            log.error(ex) { "Product import failed: ${file.originalFilename}" }
+            throw RuntimeException("Import failed: ${ex.message}", ex)
+        }
     }
 
     /**
      * Filters out duplicate products from the batch based on already processed goldIds.
-     *
-     * @param products List of products to filter
-     * @param stats Import statistics to track duplicates
-     * @return List of products without duplicates from current session
      */
     private fun filterInSessionDuplicates(products: List<Product>, stats: ImportStats): List<Product> {
         val candidateProducts = products.filter { product ->
@@ -54,20 +137,14 @@ class ProductServiceImpl(
 
     /**
      * Filters out products that already exist in the database based on goldId.
-     *
-     * @param products List of products to check against database
-     * @param stats Import statistics to track duplicates and successful imports
-     * @return List of products that don't exist in database and are ready for import
      */
-    private suspend fun filterDatabaseDuplicates(products: List<Product>, stats: ImportStats): List<Product> {
+    private fun filterDatabaseDuplicates(products: List<Product>, stats: ImportStats): List<Product> {
         if (products.isEmpty()) return products
 
         // Batch check for existing goldIds in database
         val goldIds = products.map { it.goldId }
-        val existingDbGoldIds = productRepository.findByGoldIdIn(goldIds)
-            .map { it.goldId }
-            .toList()
-            .toSet()
+        val existingDbProducts = productRepository.findByGoldIdIn(goldIds)
+        val existingDbGoldIds = existingDbProducts.map { it.goldId }.toSet()
 
         // Filter out products that already exist in database
         return products.filter { product ->
@@ -84,25 +161,18 @@ class ProductServiceImpl(
 
     /**
      * Saves a batch of products to the database.
-     *
-     * @param products List of products to save
-     * @param originalBatchSize Size of the original batch before filtering (for logging)
      */
-    private suspend fun saveBatch(products: List<Product>, originalBatchSize: Int) {
+    private fun saveBatch(products: List<Product>, originalBatchSize: Int) {
         if (products.isNotEmpty()) {
-            productRepository.saveAll(products).collect()
+            productRepository.saveAll(products)
             log.debug { "Imported batch of ${products.size} products, skipped ${originalBatchSize - products.size}" }
         }
     }
 
     /**
-     * Processes a single batch of products through the complete import pipeline:
-     * filtering in-session duplicates, filtering database duplicates, and saving to database.
-     *
-     * @param products List of products in the current batch
-     * @param stats Import statistics to track progress
+     * Processes a single batch of products through the complete import pipeline.
      */
-    private suspend fun processProductBatch(products: List<Product>, stats: ImportStats) {
+    private fun processProductBatch(products: List<Product>, stats: ImportStats) {
         val originalBatchSize = products.size
 
         // Filter out duplicates from current session
@@ -117,228 +187,70 @@ class ProductServiceImpl(
         saveBatch(productsToSave, originalBatchSize)
     }
 
-    override fun findAll(pageable: Pageable): Flow<ProductResponse> =
-        productRepository.findAllBy(pageable)
-            .map { it.toResponse() }
-
-    @Cacheable(value = ["products"], key = "#id")
-    override suspend fun findById(id: Long): ProductResponse? {
-        log.debug { "Finding product by id: $id" }
-        return productRepository.findById(id)?.toResponse()
-    }
-
-    @Transactional
-    @CacheEvict(value = ["products"], key = "#id")
-    override suspend fun update(id: Long, productRequest: ProductRequest): ProductResponse? {
-        log.debug { "Updating product with id: $id" }
-        return productRepository.findById(id)
-            ?.let {
-                log.debug { "Product found for update, proceeding with update for id: $id" }
-                productRequest.toEntity(it)
-            }
-            ?.let { productRepository.save(it) }
-            ?.toResponse()
-    }
-
-    @Transactional
-    @CacheEvict(value = ["products"], key = "#id")
-    override suspend fun delete(id: Long): Boolean {
-        log.debug { "Attempting to delete product with id: $id" }
-        return if (productRepository.existsById(id)) {
-            productRepository.deleteById(id)
-            log.debug { "Product deleted successfully with id: $id" }
-            true
-        } else {
-            log.debug { "Product not found for deletion with id: $id" }
-            false
-        }
-    }
-
     /**
-     * Retrieves a paginated list of products based on the provided pagination information.
-     *
-     * @param pageable the pagination information, including the page number and page size
-     * @return a ProductPageResponse containing the list of products for the current page,
-     *         along with pagination metadata such as total elements, total pages, and page details
+     * Parses a single CSV line into a Product entity.
      */
-    @Transactional(readOnly = true)
-    override suspend fun getPagedProducts(pageable: Pageable): ProductPageResponse {
-        log.debug { "Retrieving paged products: page=${pageable.pageNumber}, size=${pageable.pageSize}" }
-        val products = findAll(pageable).toList()
-        val totalElements = productRepository.count()
-        val totalPages = ((totalElements + pageable.pageSize - 1) / pageable.pageSize).toInt()
-
-        val response = ProductPageResponse(
-            content = products,
-            page = pageable.pageNumber,
-            size = pageable.pageSize,
-            totalElements = totalElements,
-            totalPages = totalPages,
-            first = pageable.pageNumber == FIRST_PAGE_INDEX,
-            last = pageable.pageNumber >= totalPages - PAGE_CALCULATION_OFFSET,
-        )
-
-        log.debug { "Paged products retrieved: ${products.size} items on page ${pageable.pageNumber} of $totalPages total pages" }
-        return response
-    }
-
-    /**
-     * Imports products from the specified file. The file is expected to contain product data
-     * in CSV format. The method processes the file in batches for memory efficiency and ensures
-     * that duplicate or already existing products (based on their `goldId`) are skipped.
-     *
-     * @param file The file containing product data to be imported.
-     */
-    @Transactional
-    override suspend fun importProducts(file: FilePart) {
-        log.info { "Starting product import: ${file.filename()}" }
-        val stats = ImportStats()
-
-        try {
-            // Parse CSV and process in batches for memory efficiency
-            file.content()
-                .asFlow()
-                .let { parseCsvLines(it) }
-                .buffer(DEFAULT_BATCH_SIZE)
-                .onEach { products ->
-                    processProductBatch(products, stats)
-                }
-                .onCompletion { exception ->
-                    if (exception != null) {
-                        log.error(exception) { "Error during product import" }
-                    } else {
-                        log.info { "Product import completed: imported=${stats.imported}, skipped=${stats.skipped}" }
-                    }
-                }
-                .collect()
-
-        } catch (e: Exception) {
-            log.error(e) { "Failed to import products from file: ${file.filename()}" }
-            throw e
-        }
-    }
-
-    /**
-     * Parses a stream of CSV data buffers into a flow of product batches. The first row of the CSV
-     * is treated as a header and skipped during processing. Each batch contains a predefined number
-     * of parsed products, unless the stream ends and a smaller batch remains.
-     *
-     * @param dataBufferFlow A flow of DataBuffer objects representing chunks of CSV data.
-     * @return A flow emitting lists of Product objects parsed from the CSV rows. Each list represents a batch.
-     */
-    private fun parseCsvLines(dataBufferFlow: Flow<DataBuffer>): Flow<List<Product>> = flow {
-        var headerParsed = false
-        var buffer = ""
-        val currentBatch = mutableListOf<Product>()
-
-        dataBufferFlow.collect { dataBuffer ->
-            val chunk = dataBuffer.toString(StandardCharsets.UTF_8)
-            buffer += chunk
-
-            val lines = buffer.split('\n')
-            buffer = lines.last() // Keep incomplete line in buffer
-
-            for (i in 0 until lines.size - 1) {
-                val line = lines[i].trim()
-                if (line.isEmpty()) continue
-
-                if (!headerParsed) {
-                    headerParsed = true
-                    continue // Skip header row
-                }
-
-                try {
-                    val product = parseCsvLine(line)
-                    currentBatch.add(product)
-
-                    if (currentBatch.size >= DEFAULT_BATCH_SIZE) {
-                        emit(currentBatch.toList())
-                        currentBatch.clear()
-                    }
-                } catch (e: Exception) {
-                    log.warn(e) { "Failed to parse CSV line: $line" }
-                }
-            }
-        }
-
-        // Process remaining buffer if any
-        if (buffer.trim().isNotEmpty() && headerParsed) {
-            try {
-                val product = parseCsvLine(buffer.trim())
-                currentBatch.add(product)
-            } catch (e: Exception) {
-                log.warn(e) { "Failed to parse final CSV line: $buffer" }
-            }
-        }
-
-        // Emit remaining products
-        if (currentBatch.isNotEmpty()) {
-            emit(currentBatch.toList())
-        }
-    }
-
     private fun parseCsvLine(line: String): Product {
+        log.debug { "Parsing CSV line: $line" }
         val fields = parseCsvFields(line)
-        require(fields.size == 6) { "Expected 6 fields, got ${fields.size}" }
+
+        if (fields.size < 6) {
+            throw IllegalArgumentException("Invalid CSV format - expected 6 fields, got ${fields.size}")
+        }
 
         return Product(
-            uuid = UUID.fromString(fields[0]),
-            goldId = fields[1].toLong(),
-            longName = fields[2],
-            shortName = fields[3],
-            iowUnitType = fields[4],
-            healthyCategory = fields[5],
+            uuid = UUID.fromString(fields[0].trim()),
+            goldId = fields[1].trim().toLongOrNull() ?: throw IllegalArgumentException("Invalid goldId: ${fields[1]}"),
+            longName = fields[2].trim(),
+            shortName = fields[3].trim(),
+            iowUnitType = fields[4].trim(),
+            healthyCategory = fields[5].trim(),
         )
     }
-    
+
     /**
-     * Parses a single line of CSV-formatted text into a list of fields, handling quoted fields
-     * and escaped quotes within those fields.
-     *
-     * @param line the CSV line to be parsed as a string
-     * @return a list of strings representing the parsed fields of the line
+     * Parses CSV fields from a line, handling quoted fields and escaped quotes.
      */
     private fun parseCsvFields(line: String): List<String> {
         val fields = mutableListOf<String>()
-        var current = StringBuilder()
+        val currentField = StringBuilder()
         var inQuotes = false
         var i = 0
 
         while (i < line.length) {
             val char = line[i]
-            when (char) {
-                '"' if !inQuotes && (i == 0 || line[i - 1] == ',') -> {
-                    // Start of quoted field
+
+            when {
+                char == '"' && !inQuotes -> {
                     inQuotes = true
                 }
 
-                '"' if inQuotes && i + 1 < line.length && line[i + 1] == '"' -> {
-                    // Escaped quote within quoted field
-                    current.append('"')
-                    i++ // Skip the next quote
-                }
-
-                '"' if inQuotes && (i == line.length - 1 || line[i + 1] == ',') -> {
-                    // End of quoted field
-                    inQuotes = false
-                }
-
-                ',' if !inQuotes -> {
-                    // Field separator
-                    fields.add(current.toString())
-                    current = StringBuilder()
-                }
-                else -> {
-                    // Regular character or quoted character
-                    if (!(char == '"' && !inQuotes && (i == 0 || line[i - 1] == ','))) {
-                        current.append(char)
+                char == '"' && inQuotes -> {
+                    if (i + 1 < line.length && line[i + 1] == '"') {
+                        // Escaped quote
+                        currentField.append('"')
+                        i++ // Skip next quote
+                    } else {
+                        // End of quoted field
+                        inQuotes = false
                     }
+                }
+
+                char == ',' && !inQuotes -> {
+                    fields.add(currentField.toString())
+                    currentField.clear()
+                }
+
+                else -> {
+                    currentField.append(char)
                 }
             }
             i++
         }
 
-        fields.add(current.toString())
+        // Add the last field
+        fields.add(currentField.toString())
+
         return fields
     }
 }

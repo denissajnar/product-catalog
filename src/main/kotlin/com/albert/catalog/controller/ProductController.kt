@@ -1,6 +1,5 @@
 package com.albert.catalog.controller
 
-import com.albert.catalog.dto.ProductPageResponse
 import com.albert.catalog.dto.ProductRequest
 import com.albert.catalog.dto.ProductResponse
 import com.albert.catalog.service.ProductService
@@ -14,15 +13,16 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses
 import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
 import org.springdoc.core.annotations.ParameterObject
+import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.domain.Sort
 import org.springframework.data.web.PageableDefault
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
-import org.springframework.http.codec.multipart.FilePart
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.validation.annotation.Validated
 import org.springframework.web.bind.annotation.*
+import org.springframework.web.multipart.MultipartFile
 
 @Validated
 @RestController
@@ -46,7 +46,7 @@ class ProductController(
                 content = [
                     Content(
                         mediaType = "application/json",
-                        schema = Schema(implementation = ProductPageResponse::class),
+                        schema = Schema(implementation = Pageable::class),
                     ),
                 ],
             ),
@@ -54,13 +54,13 @@ class ProductController(
     )
     @PreAuthorize("hasRole('ADMIN')")
     @GetMapping(produces = [MediaType.APPLICATION_JSON_VALUE])
-    suspend fun getAllProducts(
+    fun getAllProducts(
         @ParameterObject
         @PageableDefault(size = 20, sort = ["longName"], direction = Sort.Direction.ASC) pageable: Pageable,
-    ): ResponseEntity<ProductPageResponse> {
+    ): ResponseEntity<Page<ProductResponse>> {
         log.info { "Retrieving products with pagination: page=${pageable.pageNumber}, size=${pageable.pageSize}, sort=${pageable.sort}" }
         val response = productService.getPagedProducts(pageable)
-        log.info { "Retrieved ${response.content.size} products from page ${response.page} of ${response.totalPages}" }
+        log.info { "Retrieved ${response.content.size} products from page ${response.number} of ${response.totalPages}" }
         return ResponseEntity.ok(response)
     }
 
@@ -84,7 +84,7 @@ class ProductController(
     )
     @PreAuthorize("hasRole('ADMIN')")
     @GetMapping("/{id}", produces = [MediaType.APPLICATION_JSON_VALUE])
-    suspend fun getProductByid(
+    fun getProductByid(
         @Parameter(description = "Product id", required = true) @PathVariable id: Long,
     ): ResponseEntity<ProductResponse> {
         log.info { "Retrieving product with id: $id" }
@@ -120,7 +120,7 @@ class ProductController(
     )
     @PreAuthorize("hasRole('ADMIN')")
     @PutMapping("/{id}", produces = [MediaType.APPLICATION_JSON_VALUE])
-    suspend fun updateProduct(
+    fun updateProduct(
         @Parameter(description = "Product id", required = true) @PathVariable id: Long,
         @Parameter(
             description = "Updated product data",
@@ -151,7 +151,7 @@ class ProductController(
     )
     @PreAuthorize("hasRole('ADMIN')")
     @DeleteMapping("/{id}")
-    suspend fun deleteProduct(
+    fun deleteProduct(
         @Parameter(description = "Product id", required = true) @PathVariable id: Long,
     ): ResponseEntity<Unit> {
         log.info { "Deleting product with id: $id" }
@@ -179,17 +179,17 @@ class ProductController(
     )
     @PreAuthorize("hasRole('ADMIN')")
     @PostMapping("/import", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
-    suspend fun importProducts(
+    fun importProducts(
         @Parameter(description = "CSV file containing products to import", required = true)
-        @RequestPart("file") file: FilePart,
+        @RequestPart("file") file: MultipartFile,
     ): ResponseEntity<Unit> {
-        log.info { "Starting product import from file: ${file.filename()}" }
+        log.info { "Starting product import from file: ${file.originalFilename}" }
         try {
             productService.importProducts(file)
-            log.info { "Product import completed successfully for file: ${file.filename()}" }
+            log.info { "Product import completed successfully for file: ${file.originalFilename}" }
             return ResponseEntity.status(201).build()
         } catch (ex: Exception) {
-            log.error(ex) { "Product import failed for file: ${file.filename()}" }
+            log.error(ex) { "Product import failed for file: ${file.originalFilename}" }
             throw ex
         }
     }

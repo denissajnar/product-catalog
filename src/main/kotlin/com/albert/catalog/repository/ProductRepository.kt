@@ -1,14 +1,15 @@
 package com.albert.catalog.repository
 
 import com.albert.catalog.entity.Product
-import kotlinx.coroutines.flow.Flow
+import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
-import org.springframework.data.repository.kotlin.CoroutineCrudRepository
+import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.stereotype.Repository
 
 @Repository
-interface ProductRepository : CoroutineCrudRepository<Product, Long> {
-    fun findAllBy(pageable: Pageable): Flow<Product>
-    fun findByGoldIdIn(goldIds: Collection<Long>): Flow<Product>
-    suspend fun existsByGoldId(goldId: Long): Boolean
+interface ProductRepository : JpaRepository<Product, Long> {
+    fun findAllBy(pageable: Pageable): Page<Product>
+    fun findByGoldIdIn(goldIds: Collection<Long>): List<Product>
+
+    fun existsByGoldId(goldId: Long): Boolean
 }

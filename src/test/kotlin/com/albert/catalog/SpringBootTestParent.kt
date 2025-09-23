@@ -2,14 +2,14 @@ package com.albert.catalog
 
 import com.albert.catalog.config.TestcontainersConfiguration
 import com.albert.catalog.repository.ProductRepository
-import kotlinx.coroutines.runBlocking
+import io.restassured.RestAssured
 import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.context.annotation.Import
 import org.springframework.test.context.ActiveProfiles
-import org.springframework.test.web.reactive.server.WebTestClient
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(TestcontainersConfiguration::class)
@@ -17,16 +17,20 @@ import org.springframework.test.web.reactive.server.WebTestClient
 abstract class SpringBootTestParent {
 
     @LocalServerPort
-    protected var port: Int = 0
-
-    @Autowired
-    lateinit var webTestClient: WebTestClient
+    private var port: Int = 0
 
     @Autowired
     lateinit var productRepository: ProductRepository
 
+    @BeforeEach
+    fun setUp() {
+        RestAssured.port = port
+        RestAssured.baseURI = "http://localhost"
+        RestAssured.basePath = ""
+    }
+
     @AfterEach
-    fun tearDown(): Unit = runBlocking {
+    fun tearDown() {
         productRepository.deleteAll()
     }
 }

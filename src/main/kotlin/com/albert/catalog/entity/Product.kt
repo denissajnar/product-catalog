@@ -1,53 +1,54 @@
 package com.albert.catalog.entity
 
+import jakarta.persistence.*
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.NotNull
 import org.springframework.data.annotation.CreatedDate
-import org.springframework.data.annotation.Id
 import org.springframework.data.annotation.LastModifiedDate
-import org.springframework.data.annotation.Version
-import org.springframework.data.relational.core.mapping.Column
-import org.springframework.data.relational.core.mapping.Table
+import org.springframework.data.jpa.domain.support.AuditingEntityListener
 import java.time.LocalDateTime
 import java.util.*
 
-@Table(name = "products", schema = "catalog")
+@Entity
+@Table(name = "products", schema = "catalog", indexes = [Index(name = "idx_products_gold_id", columnList = "gold_id")])
+@EntityListeners(AuditingEntityListener::class)
 data class Product(
 
     @Id
-    val id: Long? = null,
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    var id: Long? = null,
 
     @field:NotNull
-    val uuid: UUID,
+    var uuid: UUID,
 
     @field:NotNull
-    @Column("gold_id")
-    val goldId: Long,
+    @Column(name = "gold_id")
+    var goldId: Long,
 
     @field:NotBlank
-    @Column("long_name")
-    val longName: String,
+    @Column(name = "long_name")
+    var longName: String,
 
     @field:NotBlank
-    @Column("short_name")
-    val shortName: String,
+    @Column(name = "short_name")
+    var shortName: String,
 
     @field:NotBlank
-    @Column("iow_unit_type")
-    val iowUnitType: String,
+    @Column(name = "iow_unit_type")
+    var iowUnitType: String,
 
     @field:NotBlank
-    @Column("healthy_category")
-    val healthyCategory: String,
+    @Column(name = "healthy_category")
+    var healthyCategory: String,
 
     @CreatedDate
-    @Column("created_at")
-    val createdAt: LocalDateTime? = null,
+    @Column(name = "created_at")
+    var createdAt: LocalDateTime? = null,
 
     @LastModifiedDate
-    @Column("updated_at")
-    val updatedAt: LocalDateTime? = null,
+    @Column(name = "updated_at")
+    var updatedAt: LocalDateTime? = null,
 
     @Version
-    val version: Long = 0L,
+    var version: Long = 0L,
 )
