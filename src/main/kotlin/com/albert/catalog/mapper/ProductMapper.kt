@@ -15,11 +15,12 @@ fun Product.toResponse(): ProductResponse =
         updatedAt = this.updatedAt,
     )
 
-fun ProductRequest.toEntity(existingProduct: Product): Product =
-    existingProduct.copy(
-        goldId = this.goldId,
-        longName = this.longName,
-        shortName = this.shortName,
-        iowUnitType = this.iowUnitType,
-        healthyCategory = this.healthyCategory,
-    )
+fun ProductRequest.toEntity(existingProduct: Product): Product {
+    existingProduct.goldId = this.goldId
+    existingProduct.longName = this.longName
+    existingProduct.shortName = this.shortName
+    existingProduct.iowUnitType = this.iowUnitType
+    existingProduct.healthyCategory = this.healthyCategory
+
+    return existingProduct
+}

@@ -12,7 +12,7 @@ import java.util.*
 @Entity
 @Table(name = "products", schema = "catalog", indexes = [Index(name = "idx_products_gold_id", columnList = "gold_id")])
 @EntityListeners(AuditingEntityListener::class)
-data class Product(
+class Product(
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
