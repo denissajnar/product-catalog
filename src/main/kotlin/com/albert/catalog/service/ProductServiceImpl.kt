@@ -12,6 +12,7 @@ import org.springframework.cache.annotation.CacheEvict
 import org.springframework.cache.annotation.Cacheable
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
+import org.springframework.data.repository.findByIdOrNull
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.multipart.MultipartFile
@@ -36,21 +37,20 @@ class ProductServiceImpl(
     @Cacheable(value = ["products"], key = "#id")
     override fun findById(id: Long): ProductResponse? {
         log.debug { "Finding product by id: $id" }
-        return productRepository.findById(id).orElse(null)?.toResponse()
+        return productRepository.findByIdOrNull(id)?.toResponse()
     }
 
     @Transactional
     @CacheEvict(value = ["products"], key = "#id")
     override fun update(id: Long, productRequest: ProductRequest): ProductResponse? {
         log.debug { "Updating product with id: $id" }
-        return productRepository.findById(id)
-            .map { existingProduct ->
+        return productRepository.findByIdOrNull(id)
+            ?.let { existingProduct ->
                 log.debug { "Product found for update, proceeding with update for id: $id" }
                 productRequest.toEntity(existingProduct)
             }
-            .map { productRepository.save(it) }
-            .map { it.toResponse() }
-            .orElse(null)
+            ?.let { productRepository.save(it) }
+            ?.toResponse()
     }
 
     @Transactional
@@ -84,31 +84,45 @@ class ProductServiceImpl(
 
         try {
             BufferedReader(InputStreamReader(file.inputStream, StandardCharsets.UTF_8)).use { reader ->
-                val lines = reader.readLines()
-                if (lines.isEmpty()) {
-                    log.warn { "File is empty: ${file.originalFilename}" }
-                    return
-                }
+                reader.useLines { lines ->
+                    val lineIterator = lines.iterator()
 
-                // Skip header line and process data
-                val dataLines = lines.drop(1)
-                val products = mutableListOf<Product>()
+                    // Check if file has content and skip header
+                    if (!lineIterator.hasNext()) {
+                        log.warn { "File is empty: ${file.originalFilename}" }
+                        return
+                    }
 
-                for ((index, line) in dataLines.withIndex()) {
-                    try {
-                        if (line.isNotBlank()) {
-                            val product = parseCsvLine(line)
-                            products.add(product)
+                    // Skip header line
+                    lineIterator.next()
 
-                            // Process in batches
-                            if (products.size >= DEFAULT_BATCH_SIZE || index == dataLines.size - 1) {
-                                processProductBatch(products, stats)
-                                products.clear()
+                    val products = mutableListOf<Product>()
+                    var lineIndex = 0
+
+                    while (lineIterator.hasNext()) {
+                        val line = lineIterator.next()
+                        try {
+                            if (line.isNotBlank()) {
+                                val product = parseCsvLine(line)
+                                products.add(product)
+
+                                // Process in batches
+                                if (products.size >= DEFAULT_BATCH_SIZE) {
+                                    processProductBatch(products, stats)
+                                    products.clear()
+                                }
                             }
+                        } catch (ex: Exception) {
+                            log.error(ex) { "Error parsing line ${lineIndex + 2}: $line" }
+                            stats.incrementSkipped()
                         }
-                    } catch (ex: Exception) {
-                        log.error(ex) { "Error parsing line ${index + 2}: $line" }
-                        stats.incrementSkipped()
+                        lineIndex++
+                    }
+
+                    // Process any remaining products in the final batch
+                    if (products.isNotEmpty()) {
+                        processProductBatch(products, stats)
+                        products.clear()
                     }
                 }
             }
