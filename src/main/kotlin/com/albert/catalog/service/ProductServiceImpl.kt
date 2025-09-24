@@ -77,6 +77,14 @@ class ProductServiceImpl(
         return responsePage
     }
 
+
+    /**
+     * Imports products from the provided CSV file. The method processes the file line by line,
+     * parses CSV data to create product objects, and stores them in batches. It also logs
+     * the import statistics, including successfully imported and skipped records, and handles errors.
+     *
+     * @param file the CSV file containing product data to be imported. The file should be in UTF-8 encoding.
+     */
     @Transactional
     override fun importProducts(file: MultipartFile) {
         log.info { "Starting product import: ${file.originalFilename}" }
@@ -84,53 +92,77 @@ class ProductServiceImpl(
 
         try {
             BufferedReader(InputStreamReader(file.inputStream, StandardCharsets.UTF_8)).use { reader ->
-                reader.useLines { lines ->
-                    val lineIterator = lines.iterator()
-
-                    // Check if file has content and skip header
-                    if (!lineIterator.hasNext()) {
-                        log.warn { "File is empty: ${file.originalFilename}" }
-                        return
-                    }
-
-                    // Skip header line
-                    lineIterator.next()
-
-                    val products = mutableListOf<Product>()
-                    var lineIndex = 0
-
-                    while (lineIterator.hasNext()) {
-                        val line = lineIterator.next()
-                        try {
-                            if (line.isNotBlank()) {
-                                val product = parseCsvLine(line)
-                                products.add(product)
-
-                                // Process in batches
-                                if (products.size >= DEFAULT_BATCH_SIZE) {
-                                    processProductBatch(products, stats)
-                                    products.clear()
-                                }
-                            }
-                        } catch (ex: Exception) {
-                            log.error(ex) { "Error parsing line ${lineIndex + 2}: $line" }
-                            stats.incrementSkipped()
-                        }
-                        lineIndex++
-                    }
-
-                    // Process any remaining products in the final batch
-                    if (products.isNotEmpty()) {
-                        processProductBatch(products, stats)
-                        products.clear()
-                    }
-                }
+                processFileLines(reader, stats)
             }
-
             log.info { "Product import completed: ${file.originalFilename}, imported: ${stats.imported}, skipped: ${stats.skipped}" }
         } catch (ex: Exception) {
             log.error(ex) { "Product import failed: ${file.originalFilename}" }
             throw RuntimeException("Import failed: ${ex.message}", ex)
+        }
+    }
+
+    /**
+     * Processes the lines of a file using the provided BufferedReader. Skips the first line
+     * (assumed to be a header), processes each subsequent line, and manages the collected data in batches.
+     *
+     * @param reader the BufferedReader instance used to read the file lines
+     * @param stats the ImportStats object to track processing statistics
+     */
+    private fun processFileLines(reader: BufferedReader, stats: ImportStats) {
+        reader.useLines { lines ->
+            val lineIterator = lines.iterator()
+            if (!lineIterator.hasNext()) {
+                log.warn { "File is empty" }
+                return
+            }
+
+            lineIterator.next()
+
+            val products = mutableListOf<Product>()
+            var lineIndex = 0
+
+            while (lineIterator.hasNext()) {
+                val line = lineIterator.next()
+                processLine(line, lineIndex, products, stats)
+                lineIndex++
+            }
+
+            handleBatch(products, stats)
+        }
+    }
+
+    /**
+     * Processes a single line from the input data. Parses the line into a `Product` object, adds it to the
+     * product list, and triggers batch processing if the batch size limit is reached. Logs errors and updates
+     * statistics for any failed parsing attempts.
+     *
+     * @param line the current line of input data to process
+     * @param lineIndex the index of the current line being processed, used for error logging
+     * @param products the list of `Product` objects to which the parsed product will be added
+     * @param stats an `ImportStats` object used to track import statistics, including skipped lines
+     */
+    private fun processLine(line: String, lineIndex: Int, products: MutableList<Product>, stats: ImportStats) {
+        if (line.isBlank()) {
+            return
+        }
+
+        try {
+            val product = parseCsvLine(line)
+            products.add(product)
+
+            if (products.size >= DEFAULT_BATCH_SIZE) {
+                handleBatch(products, stats)
+            }
+        } catch (ex: Exception) {
+            log.error(ex) { "Error parsing line ${lineIndex + 2}: $line" }
+            stats.incrementSkipped()
+        }
+    }
+
+    private fun handleBatch(products: MutableList<Product>, stats: ImportStats) {
+        if (products.isNotEmpty()) {
+            processProductBatch(products, stats)
+            products.clear()
         }
     }
 
@@ -150,17 +182,20 @@ class ProductServiceImpl(
     }
 
     /**
-     * Filters out products that already exist in the database based on goldId.
+     * Filters duplicate products based on their gold IDs by checking against
+     * existing database records and updates import statistics accordingly.
+     *
+     * @param products The list of products to be filtered.
+     * @param stats The statistics object used to track import and skip counts.
+     * @return A list of products that are not duplicates in the database.
      */
     private fun filterDatabaseDuplicates(products: List<Product>, stats: ImportStats): List<Product> {
         if (products.isEmpty()) return products
 
-        // Batch check for existing goldIds in database
         val goldIds = products.map { it.goldId }
         val existingDbProducts = productRepository.findByGoldIdIn(goldIds)
         val existingDbGoldIds = existingDbProducts.map { it.goldId }.toSet()
 
-        // Filter out products that already exist in database
         return products.filter { product ->
             if (existingDbGoldIds.contains(product.goldId)) {
                 stats.incrementSkipped()
@@ -184,19 +219,20 @@ class ProductServiceImpl(
     }
 
     /**
-     * Processes a single batch of products through the complete import pipeline.
+     * Processes a batch of products by filtering duplicates (both in-session and database-level)
+     * and saving the valid products to the database.
+     *
+     * @param products The list of products to be processed in the batch.
+     * @param stats The import statistics object to track skipped and imported products.
      */
     private fun processProductBatch(products: List<Product>, stats: ImportStats) {
         val originalBatchSize = products.size
-
-        // Filter out duplicates from current session
         val candidateProducts = filterInSessionDuplicates(products, stats)
 
         if (candidateProducts.isEmpty()) {
             return
         }
 
-        // Filter out products that already exist in database and save the remaining ones
         val productsToSave = filterDatabaseDuplicates(candidateProducts, stats)
         saveBatch(productsToSave, originalBatchSize)
     }
@@ -208,9 +244,7 @@ class ProductServiceImpl(
         log.debug { "Parsing CSV line: $line" }
         val fields = parseCsvFields(line)
 
-        if (fields.size < 6) {
-            throw IllegalArgumentException("Invalid CSV format - expected 6 fields, got ${fields.size}")
-        }
+        require(fields.size >= 6) { "Invalid CSV format - expected 6 fields, got ${fields.size}" }
 
         return Product(
             uuid = UUID.fromString(fields[0].trim()),
@@ -223,7 +257,11 @@ class ProductServiceImpl(
     }
 
     /**
-     * Parses CSV fields from a line, handling quoted fields and escaped quotes.
+     * Parses a single line of a CSV (Comma-Separated Values) file into a list of fields.
+     * Handles quoted fields and escaped quotes within quoted fields.
+     *
+     * @param line The CSV-formatted string to parse.
+     * @return A list of strings where each element corresponds to a field in the input CSV line.
      */
     private fun parseCsvFields(line: String): List<String> {
         val fields = mutableListOf<String>()
@@ -233,26 +271,24 @@ class ProductServiceImpl(
 
         while (i < line.length) {
             val char = line[i]
+            val nextChar = if (i + 1 < line.length) line[i + 1] else null
 
             when {
-                char == '"' && !inQuotes -> {
+                isStartQuote(char, inQuotes) -> {
                     inQuotes = true
                 }
 
-                char == '"' && inQuotes -> {
-                    if (i + 1 < line.length && line[i + 1] == '"') {
-                        // Escaped quote
-                        currentField.append('"')
-                        i++ // Skip next quote
-                    } else {
-                        // End of quoted field
-                        inQuotes = false
-                    }
+                isEscapedQuote(char, nextChar, inQuotes) -> {
+                    currentField.append('"')
+                    i++
                 }
 
-                char == ',' && !inQuotes -> {
-                    fields.add(currentField.toString())
-                    currentField.clear()
+                isEndQuote(char, nextChar, inQuotes) -> {
+                    inQuotes = false
+                }
+
+                isFieldSeparator(char, inQuotes) -> {
+                    addFieldAndReset(fields, currentField)
                 }
 
                 else -> {
@@ -262,9 +298,24 @@ class ProductServiceImpl(
             i++
         }
 
-        // Add the last field
         fields.add(currentField.toString())
-
         return fields
+    }
+
+    private fun isStartQuote(char: Char, inQuotes: Boolean) =
+        char == '"' && !inQuotes
+
+    private fun isEscapedQuote(char: Char, nextChar: Char?, inQuotes: Boolean) =
+        char == '"' && inQuotes && nextChar == '"'
+
+    private fun isEndQuote(char: Char, nextChar: Char?, inQuotes: Boolean) =
+        char == '"' && inQuotes && nextChar != '"'
+
+    private fun isFieldSeparator(char: Char, inQuotes: Boolean) =
+        char == ',' && !inQuotes
+
+    private fun addFieldAndReset(fields: MutableList<String>, currentField: StringBuilder) {
+        fields.add(currentField.toString())
+        currentField.clear()
     }
 }
