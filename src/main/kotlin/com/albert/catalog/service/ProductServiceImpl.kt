@@ -62,14 +62,12 @@ class ProductServiceImpl(
     private suspend fun filterDatabaseDuplicates(products: List<Product>, stats: ImportStats): List<Product> {
         if (products.isEmpty()) return products
 
-        // Batch check for existing goldIds in database
         val goldIds = products.map { it.goldId }
         val existingDbGoldIds = productRepository.findByGoldIdIn(goldIds)
             .map { it.goldId }
             .toList()
             .toSet()
 
-        // Filter out products that already exist in database
         return products.filter { product ->
             if (existingDbGoldIds.contains(product.goldId)) {
                 stats.incrementSkipped()
@@ -104,15 +102,12 @@ class ProductServiceImpl(
      */
     private suspend fun processProductBatch(products: List<Product>, stats: ImportStats) {
         val originalBatchSize = products.size
-
-        // Filter out duplicates from current session
         val candidateProducts = filterInSessionDuplicates(products, stats)
 
         if (candidateProducts.isEmpty()) {
             return
         }
 
-        // Filter out products that already exist in database and save the remaining ones
         val productsToSave = filterDatabaseDuplicates(candidateProducts, stats)
         saveBatch(productsToSave, originalBatchSize)
     }
@@ -195,7 +190,6 @@ class ProductServiceImpl(
         val stats = ImportStats()
 
         try {
-            // Parse CSV and process in batches for memory efficiency
             file.content()
                 .asFlow()
                 .let { parseCsvLines(it) }
@@ -232,36 +226,93 @@ class ProductServiceImpl(
         val currentBatch = mutableListOf<Product>()
 
         dataBufferFlow.collect { dataBuffer ->
-            val chunk = dataBuffer.toString(StandardCharsets.UTF_8)
-            buffer += chunk
-
-            val lines = buffer.split('\n')
-            buffer = lines.last() // Keep incomplete line in buffer
-
-            for (i in 0 until lines.size - 1) {
-                val line = lines[i].trim()
-                if (line.isEmpty()) continue
-
-                if (!headerParsed) {
-                    headerParsed = true
-                    continue // Skip header row
-                }
-
-                try {
-                    val product = parseCsvLine(line)
-                    currentBatch.add(product)
-
-                    if (currentBatch.size >= DEFAULT_BATCH_SIZE) {
-                        emit(currentBatch.toList())
-                        currentBatch.clear()
-                    }
-                } catch (e: Exception) {
-                    log.warn(e) { "Failed to parse CSV line: $line" }
-                }
+            buffer = processDataChunk(dataBuffer, buffer, currentBatch, headerParsed) { shouldSkipHeader ->
+                headerParsed = shouldSkipHeader
             }
         }
 
-        // Process remaining buffer if any
+        processFinalBuffer(buffer, headerParsed, currentBatch)
+
+        if (currentBatch.isNotEmpty()) {
+            emit(currentBatch.toList())
+        }
+    }
+
+    /**
+     * Processes a chunk of data from the given buffer, separates it into lines, processes
+     * each line, and appends incomplete lines back to the buffer for subsequent processing.
+     * Handles header parsing and manages batching of `Product` objects.
+     *
+     * @param dataBuffer The current chunk of data to process, represented as a `DataBuffer`.
+     * @param initialBuffer The initial buffer string, carrying over any incomplete data from the previous chunk.
+     * @param currentBatch A mutable list of `Product` objects to which the processed data is added.
+     * @param headerParsed A flag indicating whether the header has already been parsed in previous chunks.
+     * @param onHeaderParsed A callback to update the header parsed status when the header is encountered.
+     * @return The remaining buffer containing any incomplete line data.
+     */
+    private suspend fun FlowCollector<List<Product>>.processDataChunk(
+        dataBuffer: DataBuffer,
+        initialBuffer: String,
+        currentBatch: MutableList<Product>,
+        headerParsed: Boolean,
+        onHeaderParsed: (Boolean) -> Unit,
+    ): String {
+        val chunk = dataBuffer.toString(StandardCharsets.UTF_8)
+        val buffer = initialBuffer + chunk
+        val lines = buffer.split('\n')
+        val remainingBuffer = lines.last()
+
+        var skipHeader = !headerParsed
+
+        for (i in 0 until lines.size - 1) {
+            val line = lines[i].trim()
+            if (line.isEmpty()) continue
+
+            if (skipHeader) {
+                skipHeader = false
+                onHeaderParsed(true)
+                continue
+            }
+
+            processLine(line, currentBatch)
+            emitBatchIfReady(currentBatch)
+        }
+
+        return remainingBuffer
+    }
+
+    /**
+     * Processes a single line of CSV input, parses it into a Product,
+     * and adds it to the given batch. Logs a warning in case of a parsing failure.
+     *
+     * @param line The CSV line to be processed.
+     * @param currentBatch The list of products to which the parsed product will be added.
+     */
+    private suspend fun processLine(
+        line: String,
+        currentBatch: MutableList<Product>,
+    ) {
+        try {
+            val product = parseCsvLine(line)
+            currentBatch.add(product)
+        } catch (e: Exception) {
+            log.warn(e) { "Failed to parse CSV line: $line" }
+        }
+    }
+
+    /**
+     * Processes the final buffer, parsing and adding the resulting product to the current batch if the buffer
+     * contains valid data and the header has already been parsed.
+     *
+     * @param buffer The string containing the raw CSV line to be processed.
+     * @param headerParsed Indicates whether the header has already been parsed. Parsing proceeds only if this is true.
+     * @param currentBatch A mutable list of Product objects to which the parsed product will be added.
+     */
+    private fun processFinalBuffer(
+        buffer: String,
+        headerParsed: Boolean,
+        currentBatch: MutableList<Product>,
+    ) {
         if (buffer.trim().isNotEmpty() && headerParsed) {
             try {
                 val product = parseCsvLine(buffer.trim())
@@ -270,10 +321,18 @@ class ProductServiceImpl(
                 log.warn(e) { "Failed to parse final CSV line: $buffer" }
             }
         }
+    }
 
-        // Emit remaining products
-        if (currentBatch.isNotEmpty()) {
+    /**
+     * Emits the current batch of products to the flow collector if the batch size reaches the default threshold.
+     * After emission, the batch is cleared.
+     *
+     * @param currentBatch A mutable list of products representing the current batch to be emitted if ready.
+     */
+    private suspend fun FlowCollector<List<Product>>.emitBatchIfReady(currentBatch: MutableList<Product>) {
+        if (currentBatch.size >= DEFAULT_BATCH_SIZE) {
             emit(currentBatch.toList())
+            currentBatch.clear()
         }
     }
 
@@ -290,7 +349,7 @@ class ProductServiceImpl(
             healthyCategory = fields[5],
         )
     }
-    
+
     /**
      * Parses a single line of CSV-formatted text into a list of fields, handling quoted fields
      * and escaped quotes within those fields.
@@ -306,33 +365,28 @@ class ProductServiceImpl(
 
         while (i < line.length) {
             val char = line[i]
-            when (char) {
-                '"' if !inQuotes && (i == 0 || line[i - 1] == ',') -> {
-                    // Start of quoted field
+
+            when {
+                char == '"' && isStartOfQuotedField(line, i, inQuotes) -> {
                     inQuotes = true
                 }
 
-                '"' if inQuotes && i + 1 < line.length && line[i + 1] == '"' -> {
-                    // Escaped quote within quoted field
+                char == '"' && isEscapedQuote(line, i, inQuotes) -> {
                     current.append('"')
-                    i++ // Skip the next quote
+                    i++
                 }
 
-                '"' if inQuotes && (i == line.length - 1 || line[i + 1] == ',') -> {
-                    // End of quoted field
+                char == '"' && isEndOfQuotedField(line, i, inQuotes) -> {
                     inQuotes = false
                 }
 
-                ',' if !inQuotes -> {
-                    // Field separator
+                char == ',' && !inQuotes -> {
                     fields.add(current.toString())
                     current = StringBuilder()
                 }
-                else -> {
-                    // Regular character or quoted character
-                    if (!(char == '"' && !inQuotes && (i == 0 || line[i - 1] == ','))) {
-                        current.append(char)
-                    }
+
+                shouldAppendCharacter(char, line, i, inQuotes) -> {
+                    current.append(char)
                 }
             }
             i++
@@ -341,4 +395,16 @@ class ProductServiceImpl(
         fields.add(current.toString())
         return fields
     }
+
+    private fun isStartOfQuotedField(line: String, position: Int, inQuotes: Boolean) =
+        !inQuotes && (position == 0 || line[position - 1] == ',')
+
+    private fun isEscapedQuote(line: String, position: Int, inQuotes: Boolean) =
+        inQuotes && position + 1 < line.length && line[position + 1] == '"'
+
+    private fun isEndOfQuotedField(line: String, position: Int, inQuotes: Boolean) =
+        inQuotes && (position == line.length - 1 || line[position + 1] == ',')
+
+    private fun shouldAppendCharacter(char: Char, line: String, position: Int, inQuotes: Boolean) =
+        !(char == '"' && !inQuotes && (position == 0 || line[position - 1] == ','))
 }
