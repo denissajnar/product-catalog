@@ -25,7 +25,6 @@ class ProductServiceImpl(
 
     companion object {
         private val log = KotlinLogging.logger {}
-        const val DEFAULT_BATCH_SIZE = 1000
     }
 
     override fun findAll(pageable: Pageable): List<ProductResponse> =
