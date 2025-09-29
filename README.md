@@ -9,8 +9,7 @@
 [![SpringDoc OpenAPI](https://img.shields.io/badge/SpringDoc-2.8.13-6DB33F?logo=swagger&logoColor=white)](https://springdoc.org/)
 [![GraalVM](https://img.shields.io/badge/GraalVM-Native-FF6600?logo=oracle&logoColor=white)](https://www.graalvm.org/)
 
-A reactive microservice for managing product catalog information in an e-commerce platform, built with **Spring Boot 3.x
-** and **Kotlin**.
+A reactive microservice for managing product catalog information in an e-commerce platform, built with **Spring Boot 3.x** and **Kotlin**.
 
 ## 🚀 Features
 
